@@ -18,6 +18,12 @@ describe("scanArgs secrets", () => {
   it("is quiet on normal args", () => {
     expect(scanArgs({ path: "src/index.ts", message: "hello world, fix the login bug" })).toEqual([]);
   });
+
+  it("flags unserializable args conservatively instead of throwing", () => {
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+    expect(scanArgs(circular)).toEqual(["secret:unserializable"]);
+  });
 });
 
 describe("path:outside-roots", () => {
@@ -30,6 +36,11 @@ describe("path:outside-roots", () => {
   it("allows paths inside roots and skips check when roots unset", () => {
     expect(scanArgs({ path: "/home/me/projects/a.txt" }, { allowedRoots: ["/home/me/projects"] })).toEqual([]);
     expect(scanArgs({ path: "/etc/passwd" })).toEqual([]);
+  });
+
+  it("does not treat sibling dirs sharing a prefix as inside the root", () => {
+    expect(scanArgs({ path: "/home/me/projects-leak/id_rsa" }, { allowedRoots: ["/home/me/projects"] }))
+      .toContain("path:outside-roots");
   });
 });
 

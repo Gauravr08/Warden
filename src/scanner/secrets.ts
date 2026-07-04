@@ -35,9 +35,18 @@ function looksLikeAbsolutePath(s: string): boolean {
   return /^([A-Za-z]:[\\/]|\/)/.test(s) && !s.includes("\n") && s.length < 500;
 }
 
+function inside(p: string, root: string): boolean {
+  return p === root || p.startsWith(root.endsWith("/") ? root : root + "/");
+}
+
 export function scanArgs(args: unknown, opts: { allowedRoots?: string[] } = {}): string[] {
   const flags = new Set<string>();
-  const text = JSON.stringify(args) ?? "";
+  let text: string;
+  try {
+    text = JSON.stringify(args) ?? "";
+  } catch {
+    return ["secret:unserializable"];
+  }
   for (const { flag, re } of SECRET_PATTERNS) if (re.test(text)) flags.add(flag);
 
   const alreadySecret = flags.size > 0;
@@ -51,7 +60,7 @@ export function scanArgs(args: unknown, opts: { allowedRoots?: string[] } = {}):
   const roots = opts.allowedRoots?.map(normalized);
   if (roots && roots.length > 0) {
     walkStrings(args, (s) => {
-      if (looksLikeAbsolutePath(s) && !roots.some((r) => normalized(s).startsWith(r))) {
+      if (looksLikeAbsolutePath(s) && !roots.some((r) => inside(normalized(s), r))) {
         flags.add("path:outside-roots");
       }
     });
