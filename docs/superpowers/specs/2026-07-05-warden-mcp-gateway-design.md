@@ -98,12 +98,12 @@ Semantics:
 
 1. A call resolving to `approve` creates a pending record: id, server, tool, pretty-printed args, scanner flags.
 2. Dashboard shows an approval card via SSE; an OS toast notification (`node-notifier`) fires so the user notices without watching the dashboard.
-3. User actions: **Approve once**, **Deny**, **Always allow**, **Always deny**. The "always" actions append a matching rule to `warden.yaml` (above the defaults, below existing explicit rules).
+3. User actions: **Approve once**, **Deny**, **Always allow**, **Always deny**. The "always" actions append a matching rule to the end of the `policies` list in `warden.yaml` (first-match-wins means existing explicit rules keep precedence; `defaults` still applies only when nothing matches).
 4. The agent's MCP call simply blocks while pending. Timeout (default 120 s, configurable) → deny with the error `Blocked by warden: user did not approve`, which the agent can relay to the user.
 
 ## 5. Scanner (v1 = heuristic tier)
 
-- **Outbound args:** regex bank for secret shapes (AWS keys, GitHub tokens, private-key headers, JWTs), high-entropy string detector, absolute paths outside configured allowed roots.
+- **Outbound args:** regex bank for secret shapes (AWS keys, GitHub tokens, private-key headers, JWTs), high-entropy string detector, absolute paths outside allowed roots (configured via a `scanner.allowed_roots` list in `warden.yaml`; unset means the path check is disabled).
 - **Inbound results:** injection pattern bank (imperative override phrases such as "ignore previous instructions", system-prompt-shaped text, hidden-instruction markers, zero-width Unicode, large base64 blobs, ANSI escape sequences).
 - Verdict is a list of flags, not a binary. Policy decides consequences. Defaults shipped: secret flags → deny; injection flags → escalate to approve.
 - Documentation states plainly: these are heuristics — defense in depth, not a guarantee. LLM-based scanning is v2.
