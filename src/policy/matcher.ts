@@ -26,8 +26,7 @@ export function argsMatch(
   for (const [key, expected] of Object.entries(pattern)) {
     const actual = getPath(args, key);
     if (typeof expected === "string" && typeof actual === "string") {
-      if (!picomatch.isMatch(normalizePathlike(actual), normalizePathlike(expected), { dot: true }))
-        return false;
+      if (!globMatch(normalizePathlike(expected), normalizePathlike(actual))) return false;
     } else if (actual !== expected) {
       return false;
     }

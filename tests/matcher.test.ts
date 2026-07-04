@@ -26,4 +26,9 @@ describe("argsMatch", () => {
     expect(argsMatch({ "opts.force": true }, { opts: { force: false } })).toBe(false);
     expect(argsMatch({ "opts.force": true }, {})).toBe(false);
   });
+
+  it("bare * matches any string value including multi-segment paths", () => {
+    expect(argsMatch({ path: "*" }, { path: "/a/b/c.txt" })).toBe(true);
+    expect(argsMatch({ path: "*" }, { path: "C:\\x\\y.txt" })).toBe(true);
+  });
 });
