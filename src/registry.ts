@@ -18,6 +18,10 @@ export class ToolRegistry {
     for (const [server, tools] of toolsByServer) {
       for (const t of tools) {
         const exposed = (counts.get(t.name) ?? 0) > 1 ? `${server}__${t.name}` : t.name;
+        if (this.byExposed.has(exposed)) {
+          console.error(`[warden] duplicate tool name "${exposed}" (server ${server}) — keeping first, dropping duplicate`);
+          continue;
+        }
         this.byExposed.set(exposed, { server, original: t.name, def: { ...t, name: exposed } });
       }
     }
