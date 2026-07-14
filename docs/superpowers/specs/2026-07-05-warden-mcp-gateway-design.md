@@ -119,7 +119,8 @@ Semantics:
 
 Fail closed, always:
 - Downstream crash → auto-restart with backoff (max 3 attempts), then mark degraded (red in dashboard). That server's tools return a clear error to the agent; other servers are unaffected.
-- Gateway internal error mid-call → deny by default, audit the failure.
+- Gateway internal error mid-call (warden's own fault) → deny by default with `Blocked by warden: internal error (...)`, audited `forwarded` reflecting whether the downstream call had already been reached.
+- A downstream tool *itself* failing (throwing after warden allowed and forwarded the call) is not a warden internal error: it is audited `decision: allow`, `forwarded: true`, with the tool's error captured, and relayed to the agent as `Tool call failed: <message>`. This keeps the audit trail and rate-limit counting truthful about what warden decided versus what the tool did.
 - Dashboard port conflict → auto-increment port, print the actual URL.
 
 ## 8. Testing Strategy
