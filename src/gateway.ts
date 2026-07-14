@@ -6,9 +6,9 @@ import {
   type CallToolResult,
   type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
-import type { PolicyRule, WardenConfig } from "./config/schema.js";
+import type { WardenConfig } from "./config/schema.js";
 import { expandHome } from "./config/load.js";
-import { evaluate, evaluateResultPhase, type Decision, type PolicyInput } from "./policy/engine.js";
+import { evaluate, evaluateArgsPhase, evaluateResultPhase, type Decision } from "./policy/engine.js";
 import { globMatch } from "./policy/matcher.js";
 import { appendPolicyRule } from "./policy/writer.js";
 import { scanArgs, scanResult } from "./scanner/index.js";
@@ -39,27 +39,6 @@ function errResult(text: string): CallToolResult {
 
 function byteSize(v: unknown): number {
   return Buffer.byteLength(JSON.stringify(v) ?? "");
-}
-
-// evaluate() is plain first-match-wins: a broad, unconditional "allow" rule listed
-// before a later args_contain_secret rule shadows it, letting a secret slip through.
-// evaluateResultPhase() already solves this exact shadowing problem for the result
-// phase by scoping its scan to only rules that declare result_has_injection; this
-// mirrors that same pattern for the args/secret phase, without modifying the shared
-// (already tested/frozen) policy engine.
-function secretRuleOverride(policies: PolicyRule[], input: PolicyInput): Decision | null {
-  const filtered: PolicyRule[] = [];
-  const origIndex: number[] = [];
-  policies.forEach((rule, i) => {
-    if (rule.match.args_contain_secret !== undefined) {
-      filtered.push(rule);
-      origIndex.push(i);
-    }
-  });
-  if (filtered.length === 0) return null;
-  const d = evaluate({ policies: filtered, defaults: { action: "allow" } }, input);
-  if (d.ruleIndex === null) return null;
-  return { action: d.action, ruleIndex: origIndex[d.ruleIndex], reason: d.reason };
 }
 
 interface RecordInput {
@@ -110,13 +89,14 @@ export class Gateway {
 
   async callTool(exposedName: string, args: Record<string, unknown>): Promise<CallToolResult> {
     const startTs = Date.now();
+    const reached: { server: string; forwarded: boolean } = { server: "unknown", forwarded: false };
     try {
-      return await this.pipeline(exposedName, args, startTs);
+      return await this.pipeline(exposedName, args, startTs, reached);
     } catch (e) {
       const msg = (e as Error).message;
       this.record({
-        server: "unknown", tool: exposedName, args, decision: "deny", ruleIndex: null,
-        flags: [], forwarded: false, approvalActor: null, approvalMs: null,
+        server: reached.server, tool: exposedName, args, decision: "deny", ruleIndex: null,
+        flags: [], forwarded: reached.forwarded, approvalActor: null, approvalMs: null,
         startTs, resultBytes: null, error: msg,
       });
       return errResult(`Blocked by warden: internal error (${msg})`);
@@ -127,6 +107,7 @@ export class Gateway {
     exposedName: string,
     args: Record<string, unknown>,
     startTs: number,
+    reached: { server: string; forwarded: boolean },
   ): Promise<CallToolResult> {
     const route = this.deps.registry.resolve(exposedName);
     if (!route) {
@@ -137,16 +118,21 @@ export class Gateway {
       });
       return errResult(`Blocked by warden: unknown tool ${exposedName}`);
     }
+    reached.server = route.server;
 
     const allowedRoots = this.deps.config.scanner.allowed_roots?.map(expandHome);
     const argFlags = scanArgs(args, { allowedRoots });
     let decision: Decision = evaluate(this.deps.config, {
       server: route.server, tool: route.tool, args, flags: argFlags,
     });
-    const secretDecision = secretRuleOverride(this.deps.config.policies, {
-      server: route.server, tool: route.tool, args, flags: argFlags,
-    });
-    if (secretDecision) decision = secretDecision;
+    if (argFlags.some((f) => f.startsWith("secret:") || f.startsWith("path:"))) {
+      const argsDec = evaluateArgsPhase(this.deps.config, {
+        server: route.server, tool: route.tool, args, flags: argFlags,
+      });
+      if (argsDec && argsDec.action === "deny") {
+        decision = argsDec; // secret/path deny escalates over an earlier allow; never downgrades a deny
+      }
+    }
     let approvalActor: string | null = null;
     let approvalMs: number | null = null;
 
@@ -181,6 +167,7 @@ export class Gateway {
     let result: CallToolResult;
     try {
       result = await this.deps.downstream.callTool(route.server, route.tool, args);
+      reached.forwarded = true;
     } catch (e) {
       this.record({
         server: route.server, tool: route.tool, args, decision: "allow",
@@ -205,6 +192,7 @@ export class Gateway {
         });
         approvalActor = outcome.actor;
         approvalMs = (approvalMs ?? 0) + outcome.waitedMs;
+        if (outcome.always) this.persistAlways(route.server, route.tool, outcome.always);
         if (!outcome.approved) blockedReason = `flagged result not approved (${resultFlags.join(", ")})`;
       }
       if (blockedReason !== null) {

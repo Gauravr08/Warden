@@ -43,6 +43,17 @@ export function evaluate(cfg: PolicyConfig, input: PolicyInput): Decision {
   return { action: cfg.defaults.action, ruleIndex: null, reason: "default action" };
 }
 
+export function evaluateArgsPhase(cfg: PolicyConfig, input: PolicyInput): Decision | null {
+  for (let i = 0; i < cfg.policies.length; i++) {
+    const rule = cfg.policies[i];
+    if (rule.match.args_contain_secret === undefined) continue;
+    if (ruleMatches(rule.match, input)) {
+      return { action: rule.action, ruleIndex: i, reason: `matched policy #${i} (args phase)` };
+    }
+  }
+  return null;
+}
+
 export function evaluateResultPhase(cfg: PolicyConfig, input: PolicyInput): Decision {
   for (let i = 0; i < cfg.policies.length; i++) {
     const rule = cfg.policies[i];

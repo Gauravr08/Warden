@@ -155,4 +155,27 @@ describe("Gateway", () => {
     expect(res.isError).toBe(true);
     expect(audit.query()[0].error).toContain("kaput");
   });
+
+  it("secret-deny escalates over an earlier matching allow (defense-in-depth)", async () => {
+    const cfg = makeConfig({ policies: [
+      { match: { server: "echo", tool: "echo" }, action: "allow" },          // would match first
+      { match: { tool: "*", args_contain_secret: true }, action: "deny" },   // must still win
+    ]});
+    const gw = makeGateway(cfg);
+    await gw.refreshTools();
+    const res = await gw.callTool("echo", { key: "AKIAIOSFODNN7EXAMPLE" });
+    expect(res.isError).toBe(true);
+    expect(JSON.stringify(res.content)).toContain("Blocked by warden");
+    expect(audit.query()[0]).toMatchObject({ decision: "deny", forwarded: false });
+    expect(audit.query()[0].flags).toContain("secret:aws-access-key");
+  });
+
+  it("result-phase always_deny persists a rule", async () => {
+    const cfg = makeConfig();
+    const gw = makeGateway(cfg);
+    await gw.refreshTools();
+    approvals.once("pending", (p) => { expect(p.phase).toBe("result"); approvals.resolve(p.id, "always_deny"); });
+    await gw.callTool("tainted", {});
+    expect(cfg.policies).toContainEqual({ match: { server: "echo", tool: "tainted" }, action: "deny" });
+  });
 });

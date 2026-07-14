@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { evaluate, evaluateResultPhase } from "../src/policy/engine.js";
+import { evaluate, evaluateResultPhase, evaluateArgsPhase } from "../src/policy/engine.js";
 import type { PolicyRule } from "../src/config/schema.js";
 
 const policies: PolicyRule[] = [
@@ -39,5 +39,19 @@ describe("evaluateResultPhase", () => {
   it("matching result rule wins", () => {
     expect(evaluateResultPhase(cfg, input({ server: "fs", tool: "read_file", flags: ["injection:zero-width"] })))
       .toMatchObject({ action: "deny", ruleIndex: 3 });
+  });
+});
+
+describe("evaluateArgsPhase", () => {
+  it("returns the matching secret rule decision", () => {
+    expect(evaluateArgsPhase(cfg, input({ tool: "create_x", flags: ["secret:jwt"] })))
+      .toMatchObject({ action: "deny", ruleIndex: 2 });
+  });
+  it("returns null when no args_contain_secret rule matches (no secret flags present)", () => {
+    expect(evaluateArgsPhase(cfg, input({ tool: "create_x", flags: [] }))).toBeNull();
+  });
+  it("ignores rules without an args_contain_secret condition", () => {
+    // rule 0 (echo/echo allow, no secret condition) must never be returned here
+    expect(evaluateArgsPhase(cfg, input({ server: "github", tool: "get_issue", flags: [] }))).toBeNull();
   });
 });
