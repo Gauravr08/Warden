@@ -34,4 +34,23 @@ describe("DownstreamManager", () => {
     await vi.waitFor(() => expect(mgr.state("bad")).toBe("degraded"), { timeout: 10000, interval: 100 });
     await mgr.stop();
   }, 15000);
+
+  it("does not restart a server if stop() is called during backoff", async () => {
+    const mgr = new DownstreamManager(servers);
+    await mgr.start();
+    await mgr.callTool("echo", "crash", {}).catch(() => {});
+    // Wait until handleExit has passed its initial `stopping` check and is
+    // inside the backoff wait (state === "starting" for the restart attempt).
+    // Calling stop() immediately after the crash call is not reliable timing:
+    // stop()'s own client.close() tends to close the transport before the
+    // child's self-triggered crash-exit reaches handleExit's first guard,
+    // so the bug never gets exercised. Waiting for "starting" guarantees
+    // we are inside the backoff window when stop() is called.
+    await vi.waitFor(() => expect(mgr.state("echo")).toBe("starting"), { timeout: 5000, interval: 2 });
+    // stop() while the crash backoff timer is pending
+    await mgr.stop();
+    // give any errant restart time to (incorrectly) fire
+    await new Promise((r) => setTimeout(r, 1500));
+    expect(mgr.state("echo")).toBe("stopped");
+  }, 20000);
 });

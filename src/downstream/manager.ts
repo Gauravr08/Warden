@@ -104,6 +104,7 @@ export class DownstreamManager extends EventEmitter {
     }
     this.setState(name, "starting");
     await new Promise((r) => setTimeout(r, 250 * 2 ** (count - 1)));
+    if (this.stopping) return;
     try {
       await this.startOne(name);
     } catch (e) {
