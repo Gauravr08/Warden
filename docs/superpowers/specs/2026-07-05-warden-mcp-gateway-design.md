@@ -103,7 +103,7 @@ Semantics:
 
 ## 5. Scanner (v1 = heuristic tier)
 
-- **Outbound args:** regex bank for secret shapes (AWS keys, GitHub tokens, private-key headers, JWTs), high-entropy string detector, absolute paths outside allowed roots (configured via a `scanner.allowed_roots` list in `warden.yaml`; unset means the path check is disabled).
+- **Outbound args:** regex bank for secret shapes (AWS keys, GitHub tokens, private-key headers, JWTs), high-entropy string detector, absolute paths outside allowed roots (configured via a `scanner.allowed_roots` list in `warden.yaml`; unset means the path check is disabled). Arguments that cannot be JSON-serialized are flagged conservatively as `secret:unserializable` (fail closed).
 - **Inbound results:** injection pattern bank (imperative override phrases such as "ignore previous instructions", system-prompt-shaped text, hidden-instruction markers, zero-width Unicode, large base64 blobs, ANSI escape sequences).
 - Verdict is a list of flags, not a binary. Policy decides consequences. Defaults shipped: secret flags → deny; injection flags → escalate to approve.
 - Documentation states plainly: these are heuristics — defense in depth, not a guarantee. LLM-based scanning is v2.
