@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { Command } from "commander";
+import { Command, Option } from "commander";
 import { loadConfig } from "../config/load.js";
 import { AuditStore } from "../audit/store.js";
 import { startGateway, stateFilePath } from "./start.js";
@@ -63,7 +63,7 @@ program
 program
   .command("import")
   .description("Generate warden.yaml from a client's MCP config")
-  .requiredOption("--client <kind>", "claude-desktop | claude-code | cursor")
+  .addOption(new Option("--client <kind>", "claude-desktop | claude-code | cursor").choices(["claude-desktop", "claude-code", "cursor"]).makeOptionMandatory())
   .option("--file <path>", "explicit client config path (overrides --client default)")
   .option("--out <path>", "output warden.yaml path", "warden.yaml")
   .option("--apply", "swap the client config to point at warden (timestamped backup)", false)

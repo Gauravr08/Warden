@@ -24,6 +24,19 @@ describe("buildWardenYaml", () => {
     expect(cfg.servers.fs.args).toEqual(["fs.js"]);
     expect(cfg.defaults.action).toBe("approve");
   });
+
+  it("skips an entry literally named warden (idempotent re-import)", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "warden-i3-"));
+    const out = path.join(dir, "warden.yaml");
+    const already = { mcpServers: {
+      warden: { command: "npx", args: ["-y", "warden", "start", "--config", "/x/warden.yaml"] },
+      github: { command: "npx", args: ["-y", "@modelcontextprotocol/server-github"] },
+    }};
+    writeFileSync(out, buildWardenYaml(already));
+    const cfg = loadConfig(out);
+    expect(cfg.servers.warden).toBeUndefined();     // warden NOT nested inside itself
+    expect(cfg.servers.github).toBeDefined();        // real servers still migrated
+  });
 });
 
 describe("swapToWarden", () => {
