@@ -17,7 +17,10 @@ program
   .action(async (opts: { config: string }) => {
     try {
       const running = await startGateway(path.resolve(opts.config));
+      let closing = false;
       const shutdown = async () => {
+        if (closing) return;
+        closing = true;
         await running.close();
         process.exit(0);
       };

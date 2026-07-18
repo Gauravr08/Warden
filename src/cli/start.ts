@@ -19,7 +19,7 @@ export interface RunningGateway {
 }
 
 export function stateFilePath(): string {
-  return path.join(homedir(), ".warden", "state.json");
+  return process.env.WARDEN_STATE_FILE ?? path.join(homedir(), ".warden", "state.json");
 }
 
 export function watchPolicies(
@@ -59,51 +59,64 @@ export async function startGateway(
 
   const audit = new AuditStore(config.audit.db_path);
   const retentionMs = config.audit.retention_days * 86_400_000;
-  audit.purgeOlderThan(Date.now() - retentionMs);
-  const purgeTimer = setInterval(() => audit.purgeOlderThan(Date.now() - retentionMs), 3_600_000);
-  purgeTimer.unref();
-
   const approvals = new ApprovalManager(config.approval_timeout_ms);
-  approvals.on("pending", notifyPending);
-
   const downstream = new DownstreamManager(config.servers);
-  await downstream.start();
-
-  const registry = new ToolRegistry();
-  const gateway = new Gateway({ config, configPath, downstream, registry, approvals, audit });
-  await gateway.refreshTools();
-
-  const dash: DashboardHandle = await startDashboard({ approvals, audit }, config.dashboard.port);
-  console.error(`[warden] dashboard: http://127.0.0.1:${dash.port}`);
-
-  const stopWatch = watchPolicies(configPath, config, (msg) =>
-    dash.broadcast("warning", { message: msg }),
-  );
-
-  const transport = frontendTransport ?? new StdioServerTransport();
-  await gateway.server.connect(transport);
-  console.error(`[warden] gateway ready (${Object.keys(config.servers).length} downstream servers)`);
+  let purgeTimer: NodeJS.Timeout | undefined;
+  let dash: DashboardHandle | undefined;
+  let stopWatch: (() => void) | undefined;
 
   try {
-    mkdirSync(path.dirname(stateFilePath()), { recursive: true });
-    writeFileSync(
-      stateFilePath(),
-      JSON.stringify({ pid: process.pid, dashboardPort: dash.port, startedTs: Date.now() }),
-    );
-  } catch (e) {
-    console.error(`[warden] could not write state file: ${(e as Error).message}`);
-  }
+    audit.purgeOlderThan(Date.now() - retentionMs);
+    purgeTimer = setInterval(() => audit.purgeOlderThan(Date.now() - retentionMs), 3_600_000);
+    purgeTimer.unref();
 
-  return {
-    dashboardPort: dash.port,
-    close: async () => {
-      clearInterval(purgeTimer);
-      stopWatch();
-      rmSync(stateFilePath(), { force: true });
-      await gateway.server.close().catch(() => {});
-      await dash.close();
-      await downstream.stop();
-      audit.close();
-    },
-  };
+    approvals.on("pending", notifyPending);
+
+    await downstream.start();
+
+    const registry = new ToolRegistry();
+    const gateway = new Gateway({ config, configPath, downstream, registry, approvals, audit });
+    await gateway.refreshTools();
+
+    dash = await startDashboard({ approvals, audit }, config.dashboard.port);
+    console.error(`[warden] dashboard: http://127.0.0.1:${dash.port}`);
+
+    stopWatch = watchPolicies(configPath, config, (msg) =>
+      dash!.broadcast("warning", { message: msg }),
+    );
+
+    const transport = frontendTransport ?? new StdioServerTransport();
+    await gateway.server.connect(transport);
+    console.error(`[warden] gateway ready (${Object.keys(config.servers).length} downstream servers)`);
+
+    try {
+      mkdirSync(path.dirname(stateFilePath()), { recursive: true });
+      writeFileSync(
+        stateFilePath(),
+        JSON.stringify({ pid: process.pid, dashboardPort: dash.port, startedTs: Date.now() }),
+      );
+    } catch (e) {
+      console.error(`[warden] could not write state file: ${(e as Error).message}`);
+    }
+
+    return {
+      dashboardPort: dash.port,
+      close: async () => {
+        clearInterval(purgeTimer);
+        stopWatch!();
+        rmSync(stateFilePath(), { force: true });
+        await gateway.server.close().catch(() => {});
+        await dash!.close();
+        await downstream.stop();
+        audit.close();
+      },
+    };
+  } catch (e) {
+    if (purgeTimer) clearInterval(purgeTimer);
+    stopWatch?.();
+    await dash?.close().catch(() => {});
+    await downstream.stop().catch(() => {});
+    audit.close();
+    throw e;
+  }
 }

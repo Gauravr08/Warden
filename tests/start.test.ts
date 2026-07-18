@@ -33,26 +33,33 @@ describe("startGateway integration", () => {
     const dbPath = path.join(dir, "audit.db").replace(/\\/g, "/");
     const configPath = writeConfig(dir, dbPath);
 
-    const [clientT, serverT] = InMemoryTransport.createLinkedPair();
-    const running = await startGateway(configPath, serverT);
-    const client = new Client({ name: "t", version: "0" }, { capabilities: {} });
-    await client.connect(clientT);
+    const prevStateEnv = process.env.WARDEN_STATE_FILE;
+    process.env.WARDEN_STATE_FILE = path.join(dir, "state.json");
+    try {
+      const [clientT, serverT] = InMemoryTransport.createLinkedPair();
+      const running = await startGateway(configPath, serverT);
+      const client = new Client({ name: "t", version: "0" }, { capabilities: {} });
+      await client.connect(clientT);
 
-    const tools = await client.listTools();
-    expect(tools.tools.map((t) => t.name)).toContain("echo");
+      const tools = await client.listTools();
+      expect(tools.tools.map((t) => t.name)).toContain("echo");
 
-    const ok = await client.callTool({ name: "echo", arguments: { message: "through the stack" } });
-    expect(JSON.stringify(ok)).toContain("through the stack");
+      const ok = await client.callTool({ name: "echo", arguments: { message: "through the stack" } });
+      expect(JSON.stringify(ok)).toContain("through the stack");
 
-    const blocked = await client.callTool({ name: "danger", arguments: { target: "x" } });
-    expect(JSON.stringify(blocked)).toContain("Blocked by warden");
+      const blocked = await client.callTool({ name: "danger", arguments: { target: "x" } });
+      expect(JSON.stringify(blocked)).toContain("Blocked by warden");
 
-    await client.close();
-    await running.close();
+      await client.close();
+      await running.close();
 
-    const audit = new AuditStore(dbPath);
-    expect(audit.query()).toHaveLength(2);
-    audit.close();
+      const audit = new AuditStore(dbPath);
+      expect(audit.query()).toHaveLength(2);
+      audit.close();
+    } finally {
+      if (prevStateEnv === undefined) delete process.env.WARDEN_STATE_FILE;
+      else process.env.WARDEN_STATE_FILE = prevStateEnv;
+    }
   }, 30000);
 });
 
