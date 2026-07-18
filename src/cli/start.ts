@@ -54,6 +54,7 @@ export function watchPolicies(
 export async function startGateway(
   configPath: string,
   frontendTransport?: Transport,
+  onFrontendClose?: () => void,
 ): Promise<RunningGateway> {
   const config = loadConfig(configPath);
 
@@ -99,18 +100,26 @@ export async function startGateway(
       console.error(`[warden] could not write state file: ${(e as Error).message}`);
     }
 
-    return {
-      dashboardPort: dash.port,
-      close: async () => {
-        clearInterval(purgeTimer);
-        stopWatch!();
-        rmSync(stateFilePath(), { force: true });
-        await gateway.server.close().catch(() => {});
-        await dash!.close();
-        await downstream.stop();
-        audit.close();
-      },
+    let closed = false;
+    const close = async (): Promise<void> => {
+      if (closed) return;
+      closed = true;
+      clearInterval(purgeTimer);
+      stopWatch!();
+      rmSync(stateFilePath(), { force: true });
+      await gateway.server.close().catch(() => {});
+      await dash!.close();
+      await downstream.stop();
+      audit.close();
     };
+
+    // When the agent (our stdio parent, or an injected transport) disconnects,
+    // tear everything down so we don't orphan child processes / hold the port.
+    transport.onclose = () => {
+      void close().then(() => onFrontendClose?.());
+    };
+
+    return { dashboardPort: dash.port, close };
   } catch (e) {
     if (purgeTimer) clearInterval(purgeTimer);
     stopWatch?.();

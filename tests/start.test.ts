@@ -61,6 +61,41 @@ describe("startGateway integration", () => {
       else process.env.WARDEN_STATE_FILE = prevStateEnv;
     }
   }, 30000);
+
+  it("tears itself down when the agent disconnects (no orphan)", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "warden-d-"));
+    const dbPath = path.join(dir, "audit.db").replace(/\\/g, "/");
+    const configPath = writeConfig(dir, dbPath);
+
+    const prevStateEnv = process.env.WARDEN_STATE_FILE;
+    process.env.WARDEN_STATE_FILE = path.join(dir, "state.json");
+    try {
+      const [clientT, serverT] = InMemoryTransport.createLinkedPair();
+      let frontendClosed = false;
+      const running = await startGateway(configPath, serverT, () => {
+        frontendClosed = true;
+      });
+      const client = new Client({ name: "t", version: "0" }, { capabilities: {} });
+      await client.connect(clientT);
+
+      // dashboard is up before disconnect
+      const health = await fetch(`http://127.0.0.1:${running.dashboardPort}/api/health`);
+      expect((await health.json()).ok).toBe(true);
+
+      // agent disconnects → warden should tear itself down and fire the exit hook
+      await client.close();
+      await vi.waitFor(() => expect(frontendClosed).toBe(true), { timeout: 5000, interval: 50 });
+
+      // dashboard port is now closed (auto-teardown ran); calling close() again is a no-op
+      await expect(
+        fetch(`http://127.0.0.1:${running.dashboardPort}/api/health`),
+      ).rejects.toThrow();
+      await running.close(); // idempotent
+    } finally {
+      if (prevStateEnv === undefined) delete process.env.WARDEN_STATE_FILE;
+      else process.env.WARDEN_STATE_FILE = prevStateEnv;
+    }
+  }, 30000);
 });
 
 describe("watchPolicies", () => {

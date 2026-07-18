@@ -16,7 +16,6 @@ program
   .option("--config <path>", "path to warden.yaml", "warden.yaml")
   .action(async (opts: { config: string }) => {
     try {
-      const running = await startGateway(path.resolve(opts.config));
       let closing = false;
       const shutdown = async () => {
         if (closing) return;
@@ -24,6 +23,11 @@ program
         await running.close();
         process.exit(0);
       };
+      // Exit the process if the agent (our stdio parent) disconnects, instead
+      // of orphaning and holding the dashboard port.
+      const running = await startGateway(path.resolve(opts.config), undefined, () =>
+        void shutdown(),
+      );
       process.on("SIGINT", shutdown);
       process.on("SIGTERM", shutdown);
     } catch (e) {
