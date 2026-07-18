@@ -148,6 +148,27 @@ describe("Gateway", () => {
     expect(JSON.stringify(res.content)).toContain("rate limit");
   });
 
+  it("rate limit with a glob tool pattern aggregates across matching tools", async () => {
+    const cfg = makeConfig({
+      policies: [
+        { match: { server: "echo", tool: "echo" }, action: "allow" },
+        { match: { server: "echo", tool: "echo2" }, action: "allow" },
+      ],
+      limits: [{ match: { tool: "echo*" }, max_calls_per_hour: 1 }],
+    });
+    const downstream = stubDownstream({
+      listTools: async () => [tool("echo"), tool("echo2")],
+      callTool: async (_s, t, args) => ({ content: [{ type: "text", text: `ok:${t}:${JSON.stringify(args)}` }] }),
+    });
+    const gw = makeGateway(cfg, downstream);
+    await gw.refreshTools();
+    const first = await gw.callTool("echo", { message: "1" });
+    expect(first.isError).toBeFalsy();
+    const second = await gw.callTool("echo2", { message: "2" }); // different tool, same glob bucket -> over limit
+    expect(second.isError).toBe(true);
+    expect(JSON.stringify(second.content)).toContain("rate limit");
+  });
+
   it("fails closed when downstream throws", async () => {
     const gw = makeGateway(makeConfig(), stubDownstream({ callTool: async () => { throw new Error("kaput"); } }));
     await gw.refreshTools();

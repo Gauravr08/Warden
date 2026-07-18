@@ -24,6 +24,18 @@ function readBody(req: http.IncomingMessage): Promise<string> {
   });
 }
 
+function isLoopbackHost(hostHeader: string): boolean {
+  // IPv6 loopback is bracketed, e.g. "[::1]" or "[::1]:9977" — the trailing
+  // ":port" can't be split off with a naive split(":") since the address
+  // itself contains colons. Strip a trailing ":port" only when the header
+  // does NOT start with "[".
+  const host = hostHeader.startsWith("[")
+    ? hostHeader.replace(/^(\[[^\]]*\]).*$/, "$1")
+    : hostHeader.split(":")[0];
+  const normalized = host.toLowerCase();
+  return normalized === "127.0.0.1" || normalized === "localhost" || normalized === "[::1]" || normalized === "::1";
+}
+
 function tryListen(server: http.Server, port: number): Promise<number> {
   return new Promise((resolve, reject) => {
     const onError = (e: Error) => reject(e);
@@ -62,6 +74,12 @@ export async function startDashboard(
   deps.approvals.on("resolved", onResolved);
 
   const server = http.createServer(async (req, res) => {
+    const hostHeader = req.headers.host ?? "";
+    if (!isLoopbackHost(hostHeader)) {
+      res.writeHead(403, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: "forbidden host" }));
+      return;
+    }
     const url = new URL(req.url ?? "/", "http://localhost");
     try {
       if (req.method === "GET" && url.pathname === "/") {

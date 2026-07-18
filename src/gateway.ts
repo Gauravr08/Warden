@@ -224,12 +224,22 @@ export class Gateway {
   }
 
   private overLimit(server: string, tool: string): boolean {
+    const since = Date.now() - 3_600_000;
     for (const lim of this.deps.config.limits) {
       if (lim.match.server && !globMatch(lim.match.server, server)) continue;
       if (lim.match.tool && !globMatch(lim.match.tool, tool)) continue;
-      const n = this.deps.audit.countForwardedSince(
-        server, lim.match.tool ? tool : null, Date.now() - 3_600_000,
-      );
+      let n: number;
+      if (!lim.match.tool) {
+        n = this.deps.audit.countForwardedSince(server, null, since);
+      } else if (/[*?[\]{}!]/.test(lim.match.tool)) {
+        // glob pattern: count all forwarded tools on this server matching the pattern,
+        // not just the exact tool being called — otherwise each distinct tool matched
+        // by the glob gets its own independent counter and the aggregate cap is unbounded.
+        const pattern = lim.match.tool;
+        n = this.deps.audit.forwardedToolsSince(server, since).filter((t) => globMatch(pattern, t)).length;
+      } else {
+        n = this.deps.audit.countForwardedSince(server, lim.match.tool, since);
+      }
       if (n >= lim.max_calls_per_hour) return true;
     }
     return false;

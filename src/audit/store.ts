@@ -101,6 +101,12 @@ export class AuditStore {
     return row.n;
   }
 
+  forwardedToolsSince(server: string, sinceTs: number): string[] {
+    return (this.db.prepare(
+      "SELECT tool FROM audit WHERE forwarded = 1 AND server = ? AND ts >= ?",
+    ).all(server, sinceTs) as { tool: string }[]).map((r) => r.tool);
+  }
+
   purgeOlderThan(ts: number): number {
     return this.db.prepare("DELETE FROM audit WHERE ts < ?").run(ts).changes;
   }

@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import http from "node:http";
 import { startDashboard, type DashboardHandle } from "../src/dashboard/server.js";
 import { ApprovalManager } from "../src/approval/manager.js";
 import { AuditStore } from "../src/audit/store.js";
@@ -16,6 +17,33 @@ beforeEach(async () => {
 afterEach(async () => { await dash.close(); audit.close(); });
 
 const api = (p: string) => `http://127.0.0.1:${dash.port}${p}`;
+
+// Node's fetch (undici) refuses to let callers override the Host header (it's a
+// forbidden request header), so a spoofed-Host request must go through raw
+// node:http instead to genuinely exercise the guard.
+function rawRequest(
+  path: string,
+  opts: { host?: string; method?: string } = {},
+): Promise<{ status: number; body: string }> {
+  return new Promise((resolve, reject) => {
+    const req = http.request(
+      {
+        host: "127.0.0.1",
+        port: dash.port,
+        path,
+        method: opts.method ?? "GET",
+        headers: opts.host !== undefined ? { host: opts.host } : {},
+      },
+      (res) => {
+        let data = "";
+        res.on("data", (c) => (data += c));
+        res.on("end", () => resolve({ status: res.statusCode ?? 0, body: data }));
+      },
+    );
+    req.on("error", reject);
+    req.end();
+  });
+}
 
 describe("dashboard", () => {
   it("serves html and health", async () => {
@@ -57,6 +85,16 @@ describe("dashboard", () => {
     const rows = await (await fetch(api("/api/audit?decision=deny"))).json();
     expect(rows).toHaveLength(1);
     expect((await (await fetch(api("/api/audit?decision=allow"))).json())).toHaveLength(0);
+  });
+
+  it("rejects requests with a non-loopback Host header (anti-DNS-rebinding)", async () => {
+    const res = await rawRequest("/api/pending", { host: "evil.example.com" });
+    expect(res.status).toBe(403);
+  });
+
+  it("allows a localhost Host header", async () => {
+    const res = await fetch(`http://localhost:${dash.port}/api/health`);
+    expect(res.status).toBe(200);
   });
 
   it("streams SSE pending events", async () => {
