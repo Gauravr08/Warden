@@ -1,0 +1,34 @@
+# REAL demo: warden in front of the official filesystem MCP server.
+# The fs server is given the WHOLE sandbox (broad access — the over-permissioned
+# case warden exists to tame). warden policy restricts writes to allowed/ only.
+servers:
+  fs:
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "C:/Users/asus/Desktop/New/demo/fs-sandbox"]
+
+scanner:
+  allowed_roots: ["C:/Users/asus/Desktop/New/demo/fs-sandbox/allowed"]
+
+defaults:
+  action: deny                       # anything not explicitly allowed is blocked
+
+policies:
+  - match: { server: fs, tool: "read_*" }
+    action: allow
+  - match: { server: fs, tool: "list_*" }
+    action: allow
+  - match: { server: fs, tool: directory_tree }
+    action: allow
+  - match: { server: fs, tool: get_file_info }
+    action: allow
+  - match: { server: fs, tool: search_files }
+    action: allow
+  - match: { server: fs, tool: write_file, args: { path: "C:/Users/asus/Desktop/New/demo/fs-sandbox/allowed/**" } }
+    action: allow
+  - match: { server: fs, tool: create_directory, args: { path: "C:/Users/asus/Desktop/New/demo/fs-sandbox/allowed/**" } }
+    action: allow
+  - match: { tool: "*", args_contain_secret: true }
+    action: deny
+
+dashboard:
+  port: 9977
