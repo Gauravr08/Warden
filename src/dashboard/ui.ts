@@ -37,6 +37,12 @@ export const DASHBOARD_HTML = `<!doctype html>
 <script>
 const $ = (id) => document.getElementById(id);
 
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, (c) => (
+    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
+  ));
+}
+
 async function act(id, action) {
   await fetch("/api/pending/" + id, {
     method: "POST",
@@ -49,11 +55,11 @@ async function act(id, action) {
 function card(p) {
   const div = document.createElement("div");
   div.className = "card";
-  const flags = p.flags.length ? '<div class="flags">flags: ' + p.flags.join(", ") + "</div>" : "";
+  const flags = p.flags.length ? '<div class="flags">flags: ' + esc(p.flags.join(", ")) + "</div>" : "";
   div.innerHTML =
-    '<div class="meta">' + p.server + " / " + p.tool + (p.phase === "result" ? " (flagged result)" : "") + "</div>" +
+    '<div class="meta">' + esc(p.server) + " / " + esc(p.tool) + (p.phase === "result" ? " (flagged result)" : "") + "</div>" +
     flags +
-    '<div class="meta">' + JSON.stringify(p.args) + "</div>";
+    '<div class="meta">' + esc(JSON.stringify(p.args)) + "</div>";
   const mk = (label, cls, action) => {
     const b = document.createElement("button");
     b.textContent = label; b.className = cls;
@@ -76,9 +82,9 @@ async function refresh() {
   const q = $("decision").value ? "?decision=" + $("decision").value : "";
   const rows = await (await fetch("/api/audit" + q)).json();
   $("audit").innerHTML = rows.map((r) =>
-    "<tr><td>" + new Date(r.ts).toLocaleTimeString() + "</td><td>" + r.server +
-    "</td><td>" + r.tool + '</td><td class="' + r.decision + '">' + r.decision +
-    "</td><td>" + r.flags.join(", ") + "</td><td>" + (r.durationMs ?? "") + "</td></tr>"
+    "<tr><td>" + new Date(r.ts).toLocaleTimeString() + "</td><td>" + esc(r.server) +
+    "</td><td>" + esc(r.tool) + '</td><td class="' + esc(r.decision) + '">' + esc(r.decision) +
+    "</td><td>" + esc(r.flags.join(", ")) + "</td><td>" + esc(r.durationMs ?? "") + "</td></tr>"
   ).join("");
 }
 

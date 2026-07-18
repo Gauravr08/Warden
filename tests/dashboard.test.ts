@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { startDashboard, type DashboardHandle } from "../src/dashboard/server.js";
 import { ApprovalManager } from "../src/approval/manager.js";
 import { AuditStore } from "../src/audit/store.js";
+import { DASHBOARD_HTML } from "../src/dashboard/ui.js";
 
 let approvals: ApprovalManager;
 let audit: AuditStore;
@@ -67,5 +68,31 @@ describe("dashboard", () => {
     const text = new TextDecoder().decode(value) + new TextDecoder().decode(v2);
     expect(text).toContain("event: pending");
     await reader.cancel();
+  });
+});
+
+describe("dashboard XSS hardening", () => {
+  it("escapes untrusted values before innerHTML", () => {
+    // an esc() helper must exist in the client script
+    expect(DASHBOARD_HTML).toContain("function esc(");
+
+    // pending card: server/tool/flags/args must be escaped before innerHTML
+    expect(DASHBOARD_HTML).toContain("esc(p.server)");
+    expect(DASHBOARD_HTML).toContain("esc(p.tool)");
+    expect(DASHBOARD_HTML).toContain("esc(p.flags.join(");
+    expect(DASHBOARD_HTML).toContain("esc(JSON.stringify(p.args))");
+
+    // audit row: server/tool/flags/decision/durationMs must be escaped before innerHTML
+    expect(DASHBOARD_HTML).toContain("esc(r.server)");
+    expect(DASHBOARD_HTML).toContain("esc(r.tool)");
+    expect(DASHBOARD_HTML).toContain("esc(r.flags.join(");
+    expect(DASHBOARD_HTML).toContain("esc(r.decision)");
+    expect(DASHBOARD_HTML).toContain("esc(r.durationMs");
+
+    // no raw unescaped interpolation of args into innerHTML
+    expect(DASHBOARD_HTML).not.toMatch(/\+\s*JSON\.stringify\(p\.args\)\s*\+/);
+    // no raw r.server / r.tool concatenated directly into the audit row template
+    expect(DASHBOARD_HTML).not.toMatch(/"<\/td><td>"\s*\+\s*r\.server\s*\+/);
+    expect(DASHBOARD_HTML).not.toMatch(/"<\/td><td>"\s*\+\s*r\.tool\s*\+/);
   });
 });
