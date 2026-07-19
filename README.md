@@ -4,6 +4,8 @@
 
 Agents now hold real credentials — repos, email, filesystems. A malicious MCP server or a prompt-injected tool result runs with *your* authority. warden enforces least privilege at the only chokepoint that sees everything: the tool-call boundary.
 
+**Zero infrastructure.** One process, one SQLite file, no database/queue/identity-provider to stand up. Built for the individual developer and small team who want secret-leak and prompt-injection protection on their local agent setup *without* adopting a governance platform — and who want to **simulate any policy change against their own history before shipping it** (see below). No cloud, no account, runs on your laptop.
+
 ## Quickstart (60 seconds)
 
 ```bash
@@ -42,6 +44,29 @@ limits:
 
 Actions: `allow`, `deny`, `approve` (pause for a click in the dashboard; timeout denies). "Always allow/deny" buttons append rules here for you. Edits hot-reload; invalid edits keep the last good policy.
 
+## Simulate before you ship
+
+Writing first-match-wins glob rules blind is the real pain. `warden simulate` replays your **recorded audit history** against a **proposed** `warden.yaml` and tells you exactly which past calls would change decision — *before* you apply it:
+
+```bash
+# edit warden.yaml however you like, then:
+warden simulate --config warden.yaml
+```
+
+```
+Replayed 4 calls from the audit log against the proposed policy.
+
+  unchanged:         3
+  now DENIED:        1   (were allowed before)
+  now ALLOWED:       0   (were denied before)
+  now need APPROVAL: 0
+
+Changed decisions:
+  allow -> DENY  fs/read_text_file  — default action
+```
+
+Every changed call names the new rule that caused it. Add `--json` for a machine-readable result. It reuses the exact same policy engine the live gateway runs — including secret/path and prompt-injection escalation — so the preview matches reality. (Rate limits are time-window dependent and are not simulated.) Pair it with the dashboard's **Why** column, which shows the matched rule/reason for every real call, and you can write policy with confidence instead of guessing.
+
 ## Threat model — honest version
 
 **Stops:** unvetted MCP servers doing destructive/out-of-scope things silently; credentials wandering out through tool args; rate-runaway agents; known prompt-injection shapes in tool results reaching your agent unreviewed; "what did the agent actually do?" (audit log with redaction).
@@ -53,6 +78,7 @@ Actions: `allow`, `deny`, `approve` (pause for a click in the dashboard; timeout
 | Command | What it does |
 |---|---|
 | `warden start [--config warden.yaml]` | Run the gateway (stdio MCP server + dashboard) |
+| `warden simulate [--config warden.yaml] [--json]` | Dry-run a proposed policy against recorded history; show what would change |
 | `warden import --client <kind> [--apply]` | Migrate `claude-desktop` / `claude-code` / `cursor` config |
 | `warden status` | Is a gateway running, where is the dashboard |
 | `warden export` | Audit log as JSONL on stdout |

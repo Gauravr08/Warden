@@ -6,6 +6,7 @@ import { loadConfig } from "../config/load.js";
 import { AuditStore } from "../audit/store.js";
 import { startGateway, stateFilePath } from "./start.js";
 import { runImport, type ClientKind } from "./import.js";
+import { simulate, formatSimulation } from "../simulate.js";
 
 const program = new Command();
 program.name("warden").description("Security gateway for MCP tool calls").version("0.1.0");
@@ -62,6 +63,26 @@ program
       process.stdout.write(JSON.stringify(rec) + "\n");
     }
     audit.close();
+  });
+
+program
+  .command("simulate")
+  .description(
+    "Dry-run a proposed warden.yaml against your recorded audit history and show " +
+      "which past calls would change decision — before you apply it. " +
+      "(Rate limits are time-window dependent and are not simulated.)",
+  )
+  .option("--config <path>", "path to the PROPOSED warden.yaml", "warden.yaml")
+  .option("--json", "emit the machine-readable simulation result instead of a report", false)
+  .option("--limit <n>", "how many recent audit rows to replay", (v) => parseInt(v, 10), 5000)
+  .action((opts: { config: string; json: boolean; limit: number }) => {
+    const config = loadConfig(path.resolve(opts.config));
+    const audit = new AuditStore(config.audit.db_path);
+    const records = audit.query({ limit: opts.limit });
+    audit.close();
+    const result = simulate(config, records);
+    if (opts.json) process.stdout.write(JSON.stringify(result, null, 2) + "\n");
+    else process.stdout.write(formatSimulation(result) + "\n");
   });
 
 program

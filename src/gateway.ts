@@ -43,7 +43,7 @@ function byteSize(v: unknown): number {
 
 interface RecordInput {
   server: string; tool: string; args: Record<string, unknown>;
-  decision: string; ruleIndex: number | null; flags: string[];
+  decision: string; ruleIndex: number | null; reason: string | null; flags: string[];
   forwarded: boolean; approvalActor: string | null; approvalMs: number | null;
   startTs: number; resultBytes: number | null; error: string | null;
 }
@@ -96,8 +96,8 @@ export class Gateway {
       const msg = (e as Error).message;
       this.record({
         server: reached.server, tool: exposedName, args, decision: "deny", ruleIndex: null,
-        flags: [], forwarded: reached.forwarded, approvalActor: null, approvalMs: null,
-        startTs, resultBytes: null, error: msg,
+        reason: `internal error (${msg})`, flags: [], forwarded: reached.forwarded,
+        approvalActor: null, approvalMs: null, startTs, resultBytes: null, error: msg,
       });
       return errResult(`Blocked by warden: internal error (${msg})`);
     }
@@ -113,8 +113,8 @@ export class Gateway {
     if (!route) {
       this.record({
         server: "unknown", tool: exposedName, args, decision: "deny", ruleIndex: null,
-        flags: [], forwarded: false, approvalActor: null, approvalMs: null,
-        startTs, resultBytes: null, error: null,
+        reason: `unknown tool ${exposedName}`, flags: [], forwarded: false,
+        approvalActor: null, approvalMs: null, startTs, resultBytes: null, error: null,
       });
       return errResult(`Blocked by warden: unknown tool ${exposedName}`);
     }
@@ -158,7 +158,7 @@ export class Gateway {
     if (decision.action === "deny") {
       this.record({
         server: route.server, tool: route.tool, args, decision: "deny",
-        ruleIndex: decision.ruleIndex, flags: argFlags, forwarded: false,
+        ruleIndex: decision.ruleIndex, reason: decision.reason, flags: argFlags, forwarded: false,
         approvalActor, approvalMs, startTs, resultBytes: null, error: null,
       });
       return errResult(`Blocked by warden: ${decision.reason}`);
@@ -171,7 +171,7 @@ export class Gateway {
     } catch (e) {
       this.record({
         server: route.server, tool: route.tool, args, decision: "allow",
-        ruleIndex: decision.ruleIndex, flags: argFlags, forwarded: true,
+        ruleIndex: decision.ruleIndex, reason: decision.reason, flags: argFlags, forwarded: true,
         approvalActor, approvalMs, startTs, resultBytes: null, error: (e as Error).message,
       });
       return errResult(`Tool call failed: ${(e as Error).message}`);
@@ -198,7 +198,7 @@ export class Gateway {
       if (blockedReason !== null) {
         this.record({
           server: route.server, tool: route.tool, args, decision: "deny",
-          ruleIndex: rdec.ruleIndex, flags: allFlags, forwarded: true,
+          ruleIndex: rdec.ruleIndex, reason: blockedReason, flags: allFlags, forwarded: true,
           approvalActor, approvalMs, startTs, resultBytes: byteSize(result), error: null,
         });
         return errResult(`Blocked by warden: ${blockedReason}`);
@@ -207,7 +207,7 @@ export class Gateway {
 
     this.record({
       server: route.server, tool: route.tool, args, decision: "allow",
-      ruleIndex: decision.ruleIndex, flags: allFlags, forwarded: true,
+      ruleIndex: decision.ruleIndex, reason: decision.reason, flags: allFlags, forwarded: true,
       approvalActor, approvalMs, startTs, resultBytes: byteSize(result), error: null,
     });
     return result;
@@ -250,7 +250,7 @@ export class Gateway {
       this.deps.audit.insert({
         id: randomUUID(), ts: r.startTs, server: r.server, tool: r.tool,
         argsJson: JSON.stringify(r.args), decision: r.decision, ruleIndex: r.ruleIndex,
-        flags: r.flags, forwarded: r.forwarded, approvalActor: r.approvalActor,
+        reason: r.reason, flags: r.flags, forwarded: r.forwarded, approvalActor: r.approvalActor,
         approvalMs: r.approvalMs, resultBytes: r.resultBytes,
         durationMs: Date.now() - r.startTs, error: r.error,
       });

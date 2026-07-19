@@ -1,9 +1,13 @@
 import { describe, it, expect, beforeEach } from "vitest";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import Database from "better-sqlite3";
 import { AuditStore, redactSecrets, type AuditRecord } from "../src/audit/store.js";
 
 const rec = (over: Partial<AuditRecord>): AuditRecord => ({
   id: crypto.randomUUID(), ts: Date.now(), server: "github", tool: "get_issue",
-  argsJson: "{}", decision: "allow", ruleIndex: 0, flags: [], forwarded: true,
+  argsJson: "{}", decision: "allow", ruleIndex: 0, reason: "matched policy #0", flags: [], forwarded: true,
   approvalActor: null, approvalMs: null, resultBytes: 10, durationMs: 5, error: null,
   ...over,
 });
@@ -41,6 +45,36 @@ describe("AuditStore", () => {
     store.insert(rec({ ts: 9000 }));
     expect(store.purgeOlderThan(5000)).toBe(1);
     expect(store.query()).toHaveLength(1);
+  });
+
+  it("persists and returns the decision reason", () => {
+    store.insert(rec({ reason: "matched policy #7 (args phase)" }));
+    expect(store.query()[0].reason).toBe("matched policy #7 (args phase)");
+  });
+});
+
+describe("AuditStore reason-column migration", () => {
+  it("adds the reason column to a pre-existing db that lacks it", () => {
+    const dbPath = path.join(mkdtempSync(path.join(tmpdir(), "warden-mig-")), "audit.db");
+    // Simulate an OLD db created before the reason column existed.
+    const old = new Database(dbPath);
+    old.exec(`CREATE TABLE audit (
+      id TEXT PRIMARY KEY, ts INTEGER NOT NULL, server TEXT NOT NULL, tool TEXT NOT NULL,
+      args_json TEXT NOT NULL, decision TEXT NOT NULL, rule_index INTEGER,
+      flags TEXT NOT NULL DEFAULT '[]', forwarded INTEGER NOT NULL DEFAULT 0,
+      approval_actor TEXT, approval_ms INTEGER, result_bytes INTEGER, duration_ms INTEGER, error TEXT
+    );`);
+    old.prepare(`INSERT INTO audit (id, ts, server, tool, args_json, decision, flags)
+      VALUES ('old1', 1, 's', 't', '{}', 'allow', '[]')`).run();
+    old.close();
+
+    // Opening with the current AuditStore must migrate (ALTER TABLE ADD COLUMN reason).
+    const migrated = new AuditStore(dbPath);
+    expect(migrated.query()[0].reason).toBeNull(); // old row: reason is null, no crash
+    migrated.insert(rec({ id: "new1", ts: 2, reason: "matched policy #1" }));
+    const fresh = migrated.query({ limit: 10 }).find((r) => r.id === "new1");
+    expect(fresh?.reason).toBe("matched policy #1");
+    migrated.close();
   });
 });
 

@@ -18,6 +18,7 @@ export const DASHBOARD_HTML = `<!doctype html>
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
   td, th { padding: 6px 8px; border-bottom: 1px solid #2a2f3d; text-align: left; }
   .allow { color: #9ece6a; } .deny { color: #f7768e; } .approve { color: #e0af68; }
+  .why { color: #9aa0b0; font-size: 12px; }
   select { background: #161a23; color: #e6e6e6; border: 1px solid #2a2f3d; border-radius: 6px; padding: 4px; }
   #empty { color: #565f89; }
 </style>
@@ -31,7 +32,7 @@ export const DASHBOARD_HTML = `<!doctype html>
     <option value="">all</option><option>allow</option><option>deny</option>
   </select></h2>
   <table><thead><tr>
-    <th>time</th><th>server</th><th>tool</th><th>decision</th><th>flags</th><th>ms</th>
+    <th>time</th><th>server</th><th>tool</th><th>decision</th><th>why</th><th>flags</th><th>ms</th>
   </tr></thead><tbody id="audit"></tbody></table>
 </main>
 <script>
@@ -81,11 +82,13 @@ async function refresh() {
 
   const q = $("decision").value ? "?decision=" + $("decision").value : "";
   const rows = await (await fetch("/api/audit" + q)).json();
-  $("audit").innerHTML = rows.map((r) =>
-    "<tr><td>" + new Date(r.ts).toLocaleTimeString() + "</td><td>" + esc(r.server) +
-    "</td><td>" + esc(r.tool) + '</td><td class="' + esc(r.decision) + '">' + esc(r.decision) +
-    "</td><td>" + esc(r.flags.join(", ")) + "</td><td>" + esc(r.durationMs ?? "") + "</td></tr>"
-  ).join("");
+  $("audit").innerHTML = rows.map((r) => {
+    const why = r.reason ? esc(r.reason) : (r.ruleIndex != null ? "rule #" + esc(r.ruleIndex) : "");
+    return "<tr><td>" + new Date(r.ts).toLocaleTimeString() + "</td><td>" + esc(r.server) +
+      "</td><td>" + esc(r.tool) + '</td><td class="' + esc(r.decision) + '">' + esc(r.decision) +
+      '</td><td class="why">' + why + "</td><td>" + esc(r.flags.join(", ")) +
+      "</td><td>" + esc(r.durationMs ?? "") + "</td></tr>";
+  }).join("");
 }
 
 $("decision").onchange = refresh;

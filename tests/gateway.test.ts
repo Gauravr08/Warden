@@ -82,6 +82,7 @@ describe("Gateway", () => {
     expect(res.isError).toBe(true);
     expect(JSON.stringify(res.content)).toContain("Blocked by warden:");
     expect(audit.query()[0]).toMatchObject({ decision: "deny", forwarded: false });
+    expect(audit.query()[0].reason).toMatch(/matched policy #\d+/); // explainability: why persisted
   });
 
   it("unknown tool is denied", async () => {

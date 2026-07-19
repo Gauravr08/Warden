@@ -32,3 +32,6 @@ policies:
 
 dashboard:
   port: 9977
+
+audit:
+  db_path: "C:/Users/asus/Desktop/New/demo/fs-sandbox/audit.db"   # isolated, gitignored

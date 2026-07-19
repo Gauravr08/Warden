@@ -6,6 +6,7 @@ import { SECRET_PATTERNS } from "../scanner/secrets.js";
 export interface AuditRecord {
   id: string; ts: number; server: string; tool: string;
   argsJson: string; decision: string; ruleIndex: number | null;
+  reason: string | null;
   flags: string[]; forwarded: boolean;
   approvalActor: string | null; approvalMs: number | null;
   resultBytes: number | null; durationMs: number | null; error: string | null;
@@ -25,7 +26,7 @@ CREATE TABLE IF NOT EXISTS audit (
   id TEXT PRIMARY KEY, ts INTEGER NOT NULL,
   server TEXT NOT NULL, tool TEXT NOT NULL,
   args_json TEXT NOT NULL, decision TEXT NOT NULL,
-  rule_index INTEGER, flags TEXT NOT NULL DEFAULT '[]',
+  rule_index INTEGER, reason TEXT, flags TEXT NOT NULL DEFAULT '[]',
   forwarded INTEGER NOT NULL DEFAULT 0,
   approval_actor TEXT, approval_ms INTEGER,
   result_bytes INTEGER, duration_ms INTEGER, error TEXT
@@ -37,7 +38,7 @@ CREATE INDEX IF NOT EXISTS idx_audit_server_ts ON audit(server, ts);
 interface Row {
   id: string; ts: number; server: string; tool: string;
   args_json: string; decision: string; rule_index: number | null;
-  flags: string; forwarded: number; approval_actor: string | null;
+  reason: string | null; flags: string; forwarded: number; approval_actor: string | null;
   approval_ms: number | null; result_bytes: number | null;
   duration_ms: number | null; error: string | null;
 }
@@ -46,6 +47,7 @@ function toRecord(r: Row): AuditRecord {
   return {
     id: r.id, ts: r.ts, server: r.server, tool: r.tool,
     argsJson: r.args_json, decision: r.decision, ruleIndex: r.rule_index,
+    reason: r.reason ?? null,
     flags: JSON.parse(r.flags) as string[], forwarded: r.forwarded === 1,
     approvalActor: r.approval_actor, approvalMs: r.approval_ms,
     resultBytes: r.result_bytes, durationMs: r.duration_ms, error: r.error,
@@ -60,18 +62,27 @@ export class AuditStore {
     this.db = new Database(dbPath);
     this.db.pragma("journal_mode = WAL");
     this.db.exec(SCHEMA);
+    this.migrate();
+  }
+
+  /** Backward-compatible schema upgrades for audit.db files created by older versions. */
+  private migrate(): void {
+    const cols = this.db.prepare("PRAGMA table_info(audit)").all() as { name: string }[];
+    if (!cols.some((c) => c.name === "reason")) {
+      this.db.exec("ALTER TABLE audit ADD COLUMN reason TEXT");
+    }
   }
 
   insert(rec: AuditRecord): void {
     this.db.prepare(`
-      INSERT INTO audit (id, ts, server, tool, args_json, decision, rule_index, flags,
+      INSERT INTO audit (id, ts, server, tool, args_json, decision, rule_index, reason, flags,
         forwarded, approval_actor, approval_ms, result_bytes, duration_ms, error)
-      VALUES (@id, @ts, @server, @tool, @args_json, @decision, @rule_index, @flags,
+      VALUES (@id, @ts, @server, @tool, @args_json, @decision, @rule_index, @reason, @flags,
         @forwarded, @approval_actor, @approval_ms, @result_bytes, @duration_ms, @error)
     `).run({
       id: rec.id, ts: rec.ts, server: rec.server, tool: rec.tool,
       args_json: redactSecrets(rec.argsJson), decision: rec.decision,
-      rule_index: rec.ruleIndex, flags: JSON.stringify(rec.flags),
+      rule_index: rec.ruleIndex, reason: rec.reason, flags: JSON.stringify(rec.flags),
       forwarded: rec.forwarded ? 1 : 0, approval_actor: rec.approvalActor,
       approval_ms: rec.approvalMs, result_bytes: rec.resultBytes,
       duration_ms: rec.durationMs, error: rec.error,

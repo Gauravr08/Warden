@@ -79,7 +79,7 @@ describe("dashboard", () => {
   it("serves filtered audit", async () => {
     audit.insert({
       id: "1", ts: 1, server: "gh", tool: "x", argsJson: "{}", decision: "deny",
-      ruleIndex: null, flags: [], forwarded: false, approvalActor: null,
+      ruleIndex: null, reason: "matched policy #0", flags: [], forwarded: false, approvalActor: null,
       approvalMs: null, resultBytes: null, durationMs: 1, error: null,
     });
     const rows = await (await fetch(api("/api/audit?decision=deny"))).json();
@@ -132,5 +132,13 @@ describe("dashboard XSS hardening", () => {
     // no raw r.server / r.tool concatenated directly into the audit row template
     expect(DASHBOARD_HTML).not.toMatch(/"<\/td><td>"\s*\+\s*r\.server\s*\+/);
     expect(DASHBOARD_HTML).not.toMatch(/"<\/td><td>"\s*\+\s*r\.tool\s*\+/);
+  });
+});
+
+describe("dashboard explainability", () => {
+  it("has a Why column driven by the audit reason (escaped)", () => {
+    expect(DASHBOARD_HTML).toContain("<th>why</th>"); // header present
+    expect(DASHBOARD_HTML).toContain("r.reason"); // the row renders the persisted reason
+    expect(DASHBOARD_HTML).toContain("esc(r.reason)"); // and escapes it before innerHTML
   });
 });
