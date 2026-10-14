@@ -10,6 +10,7 @@ import { ToolRegistry } from "../src/registry.js";
 import { ApprovalManager } from "../src/approval/manager.js";
 import { AuditStore } from "../src/audit/store.js";
 import { WardenConfigSchema } from "../src/config/schema.js";
+import { simulate } from "../src/simulate.js";
 
 const tool = (name: string): Tool => ({ name, inputSchema: { type: "object" } });
 
@@ -199,5 +200,69 @@ describe("Gateway", () => {
     approvals.once("pending", (p) => { expect(p.phase).toBe("result"); approvals.resolve(p.id, "always_deny"); });
     await gw.callTool("tainted", {});
     expect(cfg.policies).toContainEqual({ match: { server: "echo", tool: "tainted" }, action: "deny" });
+  });
+
+  it("records the policy verdict, not the final outcome", async () => {
+    const cfg = makeConfig({
+      policies: [
+        { match: { server: "echo", tool: "echo" }, action: "allow" },
+        { match: { server: "echo", tool: "danger" }, action: "deny" },
+      ],
+      limits: [{ match: { server: "echo", tool: "echo" }, max_calls_per_hour: 1 }],
+    });
+    const gw = makeGateway(cfg, stubDownstream({ listTools: async () => [tool("echo"), tool("danger"), tool("ask")] }));
+    await gw.refreshTools();
+
+    await gw.callTool("echo", { message: "1" });
+    expect(audit.query()[0]).toMatchObject({ decision: "allow", policyDecision: "allow" });
+    await gw.callTool("echo", { message: "2" });
+    expect(audit.query()[0]).toMatchObject({ decision: "deny", reason: "rate limit exceeded", policyDecision: "allow" });
+
+    await gw.callTool("nope", {});
+    expect(audit.query()[0]).toMatchObject({ reason: "unknown tool nope", policyDecision: null });
+
+    await gw.callTool("danger", {});
+    expect(audit.query()[0]).toMatchObject({ decision: "deny", policyDecision: "deny" });
+
+    approvals.once("pending", (p) => approvals.resolve(p.id, "approve"));
+    await gw.callTool("ask", {}); // no rule -> default approve
+    expect(audit.query()[0]).toMatchObject({ decision: "allow", reason: "approved by user", policyDecision: "approve" });
+  });
+
+  it("round trip: replaying history under the same policy reports no changes", async () => {
+    const cfg = makeConfig({
+      policies: [
+        { match: { server: "echo", tool: "echo" }, action: "allow" },
+        { match: { server: "echo", tool: "danger" }, action: "deny" },
+        { match: { server: "echo", tool: "tainted" }, action: "allow" },
+        { match: { server: "echo", result_has_injection: true }, action: "approve" },
+      ],
+      limits: [{ match: { server: "echo", tool: "echo" }, max_calls_per_hour: 1 }],
+    });
+    const downstream = stubDownstream({
+      listTools: async () => [tool("echo"), tool("danger"), tool("tainted"), tool("ask")],
+    });
+    const gw = makeGateway(cfg, downstream);
+    await gw.refreshTools();
+    const answer = (a: "approve" | "deny") => approvals.once("pending", (p) => approvals.resolve(p.id, a));
+
+    await gw.callTool("echo", { message: "1" });
+    await gw.callTool("echo", { message: "2" }); // rate limited
+    await gw.callTool("danger", {});
+    await gw.callTool("nope", {});
+    answer("approve");
+    await gw.callTool("ask", {}); // call-phase approve -> approved
+    answer("deny");
+    await gw.callTool("ask", {}); // call-phase approve -> denied
+    answer("approve");
+    await gw.callTool("tainted", {}); // result-phase approve -> approved
+    answer("deny");
+    await gw.callTool("tainted", {}); // result-phase approve -> denied
+
+    const rows = audit.query();
+    expect(rows).toHaveLength(8);
+    const result = simulate(cfg, rows);
+    expect(result.skipped).toBe(1);
+    expect(result.changes).toEqual([]);
   });
 });

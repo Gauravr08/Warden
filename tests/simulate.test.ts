@@ -1,12 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { simulate, formatSimulation } from "../src/simulate.js";
+import { simulate, formatSimulation, historicalPolicyDecision } from "../src/simulate.js";
 import type { AuditRecord } from "../src/audit/store.js";
 import type { PolicyRule, Action } from "../src/config/schema.js";
 
 const rec = (over: Partial<AuditRecord>): AuditRecord => ({
   id: crypto.randomUUID(), ts: Date.now(), server: "fs", tool: "read_file",
   argsJson: "{}", decision: "allow", ruleIndex: 0, reason: null, flags: [], forwarded: true,
-  approvalActor: null, approvalMs: null, resultBytes: 1, durationMs: 1, error: null,
+  policyDecision: null, approvalActor: null, approvalMs: null, resultBytes: 1, durationMs: 1, error: null,
   ...over,
 });
 
@@ -76,5 +76,91 @@ describe("simulate", () => {
     expect(out).toContain("1 call");
     expect(out).toMatch(/now denied/i);
     expect(out).toContain("read_file");
+  });
+
+  describe("verdict-to-verdict replay", () => {
+    const askAll = cfg([], "approve");
+
+    it("approved-by-user row is unchanged under the same approve policy", () => {
+      const r = simulate(askAll, [rec({ decision: "allow", approvalActor: "user", reason: "approved by user" })]);
+      expect(r.changes).toHaveLength(0);
+      expect(r.unchanged).toBe(1);
+    });
+
+    it("denied-by-user and timeout rows are unchanged", () => {
+      const r = simulate(askAll, [
+        rec({ decision: "deny", approvalActor: "user", reason: "denied by user", forwarded: false }),
+        rec({ decision: "deny", approvalActor: "timeout", reason: "user did not approve", forwarded: false }),
+      ]);
+      expect(r.changes).toHaveLength(0);
+    });
+
+    it("rate-limited row is unchanged under an allow policy", () => {
+      const allow = cfg([{ match: { server: "fs", tool: "read_file" }, action: "allow" }]);
+      const r = simulate(allow, [rec({ decision: "deny", reason: "rate limit exceeded", forwarded: false })]);
+      expect(r.changes).toHaveLength(0);
+    });
+
+    it("result-phase approved row is unchanged", () => {
+      const p = cfg([
+        { match: { server: "fs", tool: "read_file" }, action: "allow" },
+        { match: { server: "fs", result_has_injection: true }, action: "approve" },
+      ]);
+      const row = rec({
+        decision: "allow", approvalActor: "user", reason: "matched policy #0",
+        flags: ["injection:override-phrase"],
+      });
+      expect(simulate(p, [row]).changes).toHaveLength(0);
+    });
+
+    it("policyDecision column takes precedence over inference", () => {
+      const row = rec({ decision: "deny", reason: "rate limit exceeded", policyDecision: "deny" });
+      expect(historicalPolicyDecision(row)).toBe("deny");
+      expect(historicalPolicyDecision({ ...row, policyDecision: null })).toBe("allow");
+    });
+
+    it("infers verdicts for legacy rows", () => {
+      expect(historicalPolicyDecision(rec({ reason: "flagged result not approved (x)", decision: "deny" }))).toBe("approve");
+      expect(historicalPolicyDecision(rec({ decision: "allow", approvalActor: "user" }))).toBe("approve");
+      expect(historicalPolicyDecision(rec({ decision: "deny" }))).toBe("deny");
+    });
+
+    it("skips unknown-tool and internal-error rows", () => {
+      const r = simulate(cfg([], "allow"), [
+        rec({ decision: "deny", reason: "unknown tool nope", forwarded: false }),
+        rec({ decision: "deny", reason: "internal error (boom)", forwarded: false }),
+      ]);
+      expect(r.skipped).toBe(2);
+      expect(r.total).toBe(2);
+      expect(r.unchanged).toBe(0);
+      expect(r.changes).toHaveLength(0);
+    });
+
+    it("counts approve -> deny in nowDenied with from: approve", () => {
+      const r = simulate(cfg([], "deny"), [rec({ policyDecision: "approve", decision: "allow" })]);
+      expect(r.nowDenied).toBe(1);
+      expect(r.changes[0]).toMatchObject({ from: "approve", to: "deny" });
+    });
+
+    it("approximate counts redacted rows only when an args rule exists", () => {
+      const row = rec({ argsJson: '{"k":"[REDACTED:secret:aws-access-key]"}', decision: "allow" });
+      const plain = cfg([{ match: { server: "fs", tool: "read_file" }, action: "allow" }]);
+      const withArgs = cfg([
+        { match: { server: "fs", tool: "read_file", args: { k: "x*" } }, action: "allow" },
+      ]);
+      expect(simulate(plain, [row]).approximate).toBe(0);
+      expect(simulate(withArgs, [row, rec()]).approximate).toBe(1);
+    });
+
+    it("formatSimulation prints skipped line and approximate note only when > 0", () => {
+      const base = { total: 1, unchanged: 1, nowDenied: 0, nowAllowed: 0, nowPrompt: 0, changes: [] };
+      const quiet = formatSimulation({ ...base, skipped: 0, approximate: 0 });
+      expect(quiet).not.toMatch(/skipped/);
+      expect(quiet).not.toMatch(/Note:/);
+      const loud = formatSimulation({ ...base, skipped: 2, approximate: 3 });
+      expect(loud).toContain("  skipped:           2   (never reached policy: unknown tool / internal error)");
+      expect(loud).toContain("Note: 3 replayed calls had redacted arguments; rules matching on args may be approximate.");
+      expect(loud).toContain("(were allowed or asked before)");
+    });
   });
 });

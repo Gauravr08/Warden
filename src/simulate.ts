@@ -10,7 +10,7 @@ import {
 export interface SimChange {
   server: string;
   tool: string;
-  from: string; // decision recorded in the audit log ("allow" | "deny")
+  from: string; // policy verdict behind the recorded decision ("allow" | "deny" | "approve")
   to: string; // decision the proposed policy would produce ("allow" | "deny" | "approve")
   reason: string;
   ruleIndex: number | null;
@@ -19,10 +19,27 @@ export interface SimChange {
 export interface SimResult {
   total: number;
   unchanged: number;
-  nowDenied: number; // was allow -> now deny
-  nowAllowed: number; // was deny -> now allow
+  nowDenied: number; // verdict is now deny
+  nowAllowed: number; // verdict is now allow
   nowPrompt: number; // would now require human approval
+  skipped: number; // never reached policy (unknown tool / internal error)
+  approximate: number; // compared rows with redacted args under a policy that matches on args
   changes: SimChange[];
+}
+
+/**
+ * The policy's verdict behind a recorded row. `decision` is the final outcome
+ * (after rate limits and human clicks); legacy rows lack `policyDecision`, so infer it.
+ */
+export function historicalPolicyDecision(r: AuditRecord): "allow" | "deny" | "approve" | null {
+  if (r.policyDecision !== null) return r.policyDecision as "allow" | "deny" | "approve";
+  const reason = r.reason ?? "";
+  if (reason.startsWith("unknown tool") || reason.startsWith("internal error")) return null;
+  if (["approved by user", "denied by user", "user did not approve"].includes(reason)) return "approve";
+  if (reason.startsWith("flagged result not approved")) return "approve";
+  if (reason === "rate limit exceeded") return "allow";
+  if (r.decision === "allow" && r.approvalActor !== null) return "approve";
+  return r.decision as "allow" | "deny";
 }
 
 function parseArgs(argsJson: string): Record<string, unknown> {
@@ -65,13 +82,21 @@ export function simulate(cfg: PolicyConfig, records: AuditRecord[]): SimResult {
     nowDenied: 0,
     nowAllowed: 0,
     nowPrompt: 0,
+    skipped: 0,
+    approximate: 0,
     changes: [],
   };
+  const hasArgsRule = cfg.policies.some((p) => p.match.args !== undefined);
 
   for (const r of records) {
+    const from = historicalPolicyDecision(r);
+    if (from === null) {
+      result.skipped++;
+      continue;
+    }
+    if (hasArgsRule && r.argsJson.includes("[REDACTED:")) result.approximate++;
     const dec = redecide(cfg, r);
     const to = dec.action;
-    const from = r.decision;
 
     if (to === from) {
       result.unchanged++;
@@ -101,9 +126,16 @@ export function formatSimulation(r: SimResult): string {
   lines.push(`Replayed ${r.total} ${plural(r.total)} from the audit log against the proposed policy.`);
   lines.push("");
   lines.push(`  unchanged:         ${r.unchanged}`);
-  lines.push(`  now DENIED:        ${r.nowDenied}   (were allowed before)`);
-  lines.push(`  now ALLOWED:       ${r.nowAllowed}   (were denied before)`);
-  lines.push(`  now need APPROVAL: ${r.nowPrompt}`);
+  lines.push(`  now DENIED:        ${r.nowDenied}   (were allowed or asked before)`);
+  lines.push(`  now ALLOWED:       ${r.nowAllowed}   (were denied or asked before)`);
+  lines.push(`  now need APPROVAL: ${r.nowPrompt}   (were allowed or denied before)`);
+  if (r.skipped > 0) {
+    lines.push(`  skipped:           ${r.skipped}   (never reached policy: unknown tool / internal error)`);
+  }
+  if (r.approximate > 0) {
+    lines.push("");
+    lines.push(`Note: ${r.approximate} replayed ${plural(r.approximate)} had redacted arguments; rules matching on args may be approximate.`);
+  }
 
   if (r.changes.length > 0) {
     lines.push("");

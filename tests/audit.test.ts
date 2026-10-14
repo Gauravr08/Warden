@@ -8,7 +8,7 @@ import { AuditStore, redactSecrets, type AuditRecord } from "../src/audit/store.
 const rec = (over: Partial<AuditRecord>): AuditRecord => ({
   id: crypto.randomUUID(), ts: Date.now(), server: "github", tool: "get_issue",
   argsJson: "{}", decision: "allow", ruleIndex: 0, reason: "matched policy #0", flags: [], forwarded: true,
-  approvalActor: null, approvalMs: null, resultBytes: 10, durationMs: 5, error: null,
+  policyDecision: null, approvalActor: null, approvalMs: null, resultBytes: 10, durationMs: 5, error: null,
   ...over,
 });
 
@@ -50,6 +50,36 @@ describe("AuditStore", () => {
   it("persists and returns the decision reason", () => {
     store.insert(rec({ reason: "matched policy #7 (args phase)" }));
     expect(store.query()[0].reason).toBe("matched policy #7 (args phase)");
+  });
+});
+
+describe("AuditStore policy_decision", () => {
+  it("round-trips policyDecision", () => {
+    store.insert(rec({ id: "a", policyDecision: "approve" }));
+    store.insert(rec({ id: "b", policyDecision: null }));
+    const rows = store.query();
+    expect(rows.find((r) => r.id === "a")?.policyDecision).toBe("approve");
+    expect(rows.find((r) => r.id === "b")?.policyDecision).toBeNull();
+  });
+
+  it("migrates a db created without the policy_decision column", () => {
+    const dbPath = path.join(mkdtempSync(path.join(tmpdir(), "warden-mig-")), "audit.db");
+    const old = new Database(dbPath);
+    old.exec(`CREATE TABLE audit (
+      id TEXT PRIMARY KEY, ts INTEGER NOT NULL, server TEXT NOT NULL, tool TEXT NOT NULL,
+      args_json TEXT NOT NULL, decision TEXT NOT NULL, rule_index INTEGER, reason TEXT,
+      flags TEXT NOT NULL DEFAULT '[]', forwarded INTEGER NOT NULL DEFAULT 0,
+      approval_actor TEXT, approval_ms INTEGER, result_bytes INTEGER, duration_ms INTEGER, error TEXT
+    );`);
+    old.prepare(`INSERT INTO audit (id, ts, server, tool, args_json, decision, flags)
+      VALUES ('old1', 1, 's', 't', '{}', 'allow', '[]')`).run();
+    old.close();
+
+    const migrated = new AuditStore(dbPath);
+    expect(migrated.query()[0].policyDecision).toBeNull();
+    migrated.insert(rec({ id: "new1", ts: 2, policyDecision: "deny" }));
+    expect(migrated.query().find((r) => r.id === "new1")?.policyDecision).toBe("deny");
+    migrated.close();
   });
 });
 
