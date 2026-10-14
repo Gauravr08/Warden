@@ -62,6 +62,47 @@ describe("startGateway integration", () => {
     }
   }, 30000);
 
+  it("applying a policy via the dashboard API hot-reloads the live config", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "warden-a-"));
+    const dbPath = path.join(dir, "audit.db").replace(/\\/g, "/");
+    const configPath = writeConfig(dir, dbPath);
+
+    const prevStateEnv = process.env.WARDEN_STATE_FILE;
+    process.env.WARDEN_STATE_FILE = path.join(dir, "state.json");
+    try {
+      const [clientT, serverT] = InMemoryTransport.createLinkedPair();
+      const running = await startGateway(configPath, serverT);
+      const client = new Client({ name: "t", version: "0" }, { capabilities: {} });
+      await client.connect(clientT);
+      const base = `http://127.0.0.1:${running.dashboardPort}`;
+
+      const ok = await client.callTool({ name: "echo", arguments: { message: "before" } });
+      expect(JSON.stringify(ok)).toContain("before");
+
+      const { yaml, hash } = await (await fetch(`${base}/api/policy`)).json();
+      const res = await fetch(`${base}/api/policy/apply`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ yaml: yaml.replace("action: allow", "action: deny"), hash }),
+      });
+      expect(res.status).toBe(200);
+
+      await vi.waitFor(
+        async () => {
+          const r = await client.callTool({ name: "echo", arguments: { message: "after" } });
+          expect(JSON.stringify(r)).toContain("Blocked by warden");
+        },
+        { timeout: 5000, interval: 100 },
+      );
+
+      await client.close();
+      await running.close();
+    } finally {
+      if (prevStateEnv === undefined) delete process.env.WARDEN_STATE_FILE;
+      else process.env.WARDEN_STATE_FILE = prevStateEnv;
+    }
+  }, 30000);
+
   it("tears itself down when the agent disconnects (no orphan)", async () => {
     const dir = mkdtempSync(path.join(tmpdir(), "warden-d-"));
     const dbPath = path.join(dir, "audit.db").replace(/\\/g, "/");

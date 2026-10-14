@@ -1,5 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import http from "node:http";
+import { createHash } from "node:crypto";
+import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { startDashboard, type DashboardHandle } from "../src/dashboard/server.js";
 import { ApprovalManager } from "../src/approval/manager.js";
 import { AuditStore } from "../src/audit/store.js";
@@ -79,7 +83,7 @@ describe("dashboard", () => {
   it("serves filtered audit", async () => {
     audit.insert({
       id: "1", ts: 1, server: "gh", tool: "x", argsJson: "{}", decision: "deny",
-      ruleIndex: null, reason: "matched policy #0", flags: [], forwarded: false, approvalActor: null,
+      ruleIndex: null, reason: "matched policy #0", flags: [], forwarded: false, policyDecision: null, approvalActor: null,
       approvalMs: null, resultBytes: null, durationMs: 1, error: null,
     });
     const rows = await (await fetch(api("/api/audit?decision=deny"))).json();
@@ -118,7 +122,8 @@ describe("dashboard XSS hardening", () => {
     expect(DASHBOARD_HTML).toContain("esc(p.server)");
     expect(DASHBOARD_HTML).toContain("esc(p.tool)");
     expect(DASHBOARD_HTML).toContain("esc(p.flags.join(");
-    expect(DASHBOARD_HTML).toContain("esc(JSON.stringify(p.args))");
+    // args are pretty-printed, and still escaped as a whole before innerHTML
+    expect(DASHBOARD_HTML).toContain("esc(JSON.stringify(p.args, null, 2))");
 
     // audit row: server/tool/flags/decision/durationMs must be escaped before innerHTML
     expect(DASHBOARD_HTML).toContain("esc(r.server)");
@@ -135,9 +140,196 @@ describe("dashboard XSS hardening", () => {
   });
 });
 
+describe("dashboard Policy tab UI", () => {
+  it("has the Policy tab, its controls, and a warning banner", () => {
+    expect(DASHBOARD_HTML).toContain('id="tab-policy"');
+    expect(DASHBOARD_HTML).toContain("Preview changes");
+    expect(DASHBOARD_HTML).toContain("Reload from file");
+    expect(DASHBOARD_HTML).toContain("Nothing is saved until you click Apply.");
+    expect(DASHBOARD_HTML).toContain('addEventListener("warning"');
+  });
+
+  it("escapes every server value in the changes table and errors", () => {
+    expect(DASHBOARD_HTML).toContain("esc(c.server)");
+    expect(DASHBOARD_HTML).toContain("esc(c.tool)");
+    expect(DASHBOARD_HTML).toContain("esc(c.from)");
+    expect(DASHBOARD_HTML).toContain("esc(c.to)");
+    expect(DASHBOARD_HTML).toContain("esc(c.reason)");
+    expect(DASHBOARD_HTML).toContain("esc(c.ruleIndex)");
+    expect(DASHBOARD_HTML).toContain("esc(e.message)");
+    expect(DASHBOARD_HTML).toContain("esc(msg)");
+    // the editor is filled via .value, never innerHTML
+    expect(DASHBOARD_HTML).toContain("$(\"yaml\").value =");
+    expect(DASHBOARD_HTML).not.toMatch(/\+\s*c\.(server|tool|from|to|reason)\s*\+/);
+  });
+});
+
+describe("dashboard policy API + CSRF guard", () => {
+  const BASE = `servers:
+  echo:
+    command: node
+    args: [x.mjs]
+defaults: { action: deny }
+policies:
+  - match: { server: echo, tool: echo }
+    action: allow
+dashboard: { port: 0 }
+audit: { db_path: ":memory:" }
+`;
+  let dir: string;
+  let cfgPath: string;
+  let pdash: DashboardHandle;
+  let pAudit: AuditStore;
+  const sha = (s: string) => createHash("sha256").update(s).digest("hex");
+
+  beforeEach(async () => {
+    dir = mkdtempSync(path.join(tmpdir(), "warden-pol-"));
+    cfgPath = path.join(dir, "warden.yaml");
+    writeFileSync(cfgPath, BASE);
+    pAudit = new AuditStore(":memory:");
+    pdash = await startDashboard({ approvals: new ApprovalManager(5000), audit: pAudit, configPath: cfgPath }, 0);
+  });
+  afterEach(async () => { await pdash.close(); pAudit.close(); });
+
+  function post(
+    p: string,
+    body: string,
+    headers: Record<string, string> = { "content-type": "application/json" },
+  ): Promise<{ status: number; json: any }> {
+    return new Promise((resolve, reject) => {
+      const req = http.request(
+        { host: "127.0.0.1", port: pdash.port, path: p, method: "POST", headers },
+        (res) => {
+          let data = "";
+          res.on("data", (c) => (data += c));
+          res.on("end", () => {
+            let json: any = null;
+            try { json = JSON.parse(data); } catch { /* non-json */ }
+            resolve({ status: res.statusCode ?? 0, json });
+          });
+        },
+      );
+      req.on("error", reject);
+      req.end(body);
+    });
+  }
+  const getPolicy = async () => (await fetch(`http://127.0.0.1:${pdash.port}/api/policy`)).json();
+  const seed = (id: string, tool: string, decision: string) =>
+    pAudit.insert({
+      id, ts: 1, server: "echo", tool, argsJson: "{}", decision, ruleIndex: null, reason: "x",
+      flags: [], forwarded: decision === "allow", policyDecision: decision, approvalActor: null,
+      approvalMs: null, resultBytes: null, durationMs: 1, error: null,
+    });
+
+  it("GET /api/policy returns file text + sha256; 404 without configPath", async () => {
+    const body = await getPolicy();
+    expect(body.yaml).toBe(BASE);
+    expect(body.hash).toBe(sha(BASE));
+    const res = await fetch(api("/api/policy")); // top-level dash has no configPath
+    expect(res.status).toBe(404);
+    const postJson = await fetch(api("/api/policy/preview"), {
+      method: "POST", headers: { "content-type": "application/json" }, body: "{}",
+    });
+    expect(postJson.status).toBe(404);
+  });
+
+  it("preview returns a SimResult for valid YAML and 400 for invalid", async () => {
+    seed("1", "echo", "allow");
+    seed("2", "echo", "allow");
+    const denied = BASE.replace("action: allow", "action: deny");
+    const ok = await post("/api/policy/preview", JSON.stringify({ yaml: denied }));
+    expect(ok.status).toBe(200);
+    expect(ok.json.ok).toBe(true);
+    expect(ok.json.result.total).toBe(2);
+    expect(ok.json.result.nowDenied).toBe(2);
+    const bad = await post("/api/policy/preview", JSON.stringify({ yaml: "policies:\n  - action: nope\n" }));
+    expect(bad.status).toBe(400);
+    expect(bad.json.ok).toBe(false);
+    expect(typeof bad.json.error).toBe("string");
+    expect((await post("/api/policy/preview", "{not json")).status).toBe(400);
+    expect((await post("/api/policy/preview", JSON.stringify({ yaml: 5 }))).status).toBe(400);
+  });
+
+  it("apply writes the file and returns the new hash", async () => {
+    const { hash } = await getPolicy();
+    const next = BASE.replace("action: allow", "action: deny");
+    const res = await post("/api/policy/apply", JSON.stringify({ yaml: next, hash }));
+    expect(res.status).toBe(200);
+    expect(res.json).toEqual({ ok: true, hash: sha(next) });
+    expect(readFileSync(cfgPath, "utf8")).toBe(next);
+    expect(readdirSync(dir)).toEqual(["warden.yaml"]); // no stray .tmp
+  });
+
+  it("apply with a stale hash is 409 and leaves the file untouched", async () => {
+    const { hash } = await getPolicy();
+    writeFileSync(cfgPath, BASE + "# changed meanwhile\n");
+    const res = await post("/api/policy/apply", JSON.stringify({ yaml: BASE, hash }));
+    expect(res.status).toBe(409);
+    expect(res.json.error).toContain("changed since you loaded it");
+    expect(readFileSync(cfgPath, "utf8")).toBe(BASE + "# changed meanwhile\n");
+  });
+
+  it.each([
+    ["servers", BASE.replace("command: node", "command: evil")],
+    ["audit", BASE.replace('db_path: ":memory:"', 'db_path: "/tmp/other.db"')],
+    ["dashboard", BASE.replace("port: 0", "port: 1234")],
+    ["approval_timeout_ms", BASE + "approval_timeout_ms: 5\n"],
+  ])("apply refuses changes to %s and leaves the file untouched", async (_name, next) => {
+    const { hash } = await getPolicy();
+    const res = await post("/api/policy/apply", JSON.stringify({ yaml: next, hash }));
+    expect(res.status).toBe(400);
+    expect(res.json.error).toContain("Only policies, limits, defaults and scanner can be changed here");
+    expect(readFileSync(cfgPath, "utf8")).toBe(BASE);
+  });
+
+  it("apply rejects invalid YAML / bad bodies and leaves the file untouched", async () => {
+    const { hash } = await getPolicy();
+    const res = await post("/api/policy/apply", JSON.stringify({ yaml: "policies:\n  - action: nope\n", hash }));
+    expect(res.status).toBe(400);
+    expect((await post("/api/policy/apply", JSON.stringify({ yaml: BASE }))).status).toBe(400); // no hash
+    expect(readFileSync(cfgPath, "utf8")).toBe(BASE);
+  });
+
+  it("CSRF: POST without a JSON content-type is 403 on every POST route", async () => {
+    const { hash } = await getPolicy();
+    const body = JSON.stringify({ yaml: BASE, hash });
+    for (const p of ["/api/policy/preview", "/api/policy/apply", "/api/pending/x"]) {
+      expect((await post(p, body, { "content-type": "text/plain" })).status).toBe(403);
+      expect((await post(p, body, {})).status).toBe(403);
+    }
+  });
+
+  it("CSRF: a foreign or null Origin is 403; same-origin is allowed", async () => {
+    const body = JSON.stringify({ yaml: BASE });
+    const json = { "content-type": "application/json" };
+    for (const origin of ["http://evil.example", "null", `http://127.0.0.1:${pdash.port + 1}`, `https://127.0.0.1:${pdash.port}`]) {
+      const r = await post("/api/policy/preview", body, { ...json, origin });
+      expect(r.status).toBe(403);
+    }
+    // a foreign Origin must not reach apply either, even with a valid hash
+    const { hash } = await getPolicy();
+    const evil = await post("/api/policy/apply", JSON.stringify({ yaml: BASE.replace("allow", "deny"), hash }), {
+      ...json, origin: "http://evil.example",
+    });
+    expect(evil.status).toBe(403);
+    expect(readFileSync(cfgPath, "utf8")).toBe(BASE);
+
+    for (const origin of [`http://127.0.0.1:${pdash.port}`, `http://localhost:${pdash.port}`]) {
+      expect((await post("/api/policy/preview", body, { ...json, origin })).status).toBe(200);
+    }
+    expect((await post("/api/policy/preview", body, json)).status).toBe(200); // no Origin (curl/CLI)
+  });
+
+  it("body over 1 MB is 413", async () => {
+    const big = JSON.stringify({ yaml: "#" + "a".repeat(1_100_000) });
+    const res = await post("/api/policy/preview", big);
+    expect(res.status).toBe(413);
+  });
+});
+
 describe("dashboard explainability", () => {
   it("has a Why column driven by the audit reason (escaped)", () => {
-    expect(DASHBOARD_HTML).toContain("<th>why</th>"); // header present
+    expect(DASHBOARD_HTML).toContain("<th>Why</th>"); // header present
     expect(DASHBOARD_HTML).toContain("r.reason"); // the row renders the persisted reason
     expect(DASHBOARD_HTML).toContain("esc(r.reason)"); // and escapes it before innerHTML
   });

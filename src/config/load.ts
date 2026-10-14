@@ -27,18 +27,22 @@ export function loadConfig(configPath: string): WardenConfig {
   } catch (e) {
     throw new ConfigError(`Cannot read config file ${configPath}: ${(e as Error).message}`);
   }
+  return parseConfigText(raw, configPath);
+}
+
+export function parseConfigText(raw: string, label: string): WardenConfig {
   let doc: unknown;
   try {
     doc = parse(raw); // yaml lib errors include line:col
   } catch (e) {
-    throw new ConfigError(`YAML error in ${configPath}: ${(e as Error).message}`);
+    throw new ConfigError(`YAML error in ${label}: ${(e as Error).message}`);
   }
   const parsed = WardenConfigSchema.safeParse(doc ?? {});
   if (!parsed.success) {
     const issues = parsed.error.issues
       .map((i) => `  ${i.path.join(".")}: ${i.message}`)
       .join("\n");
-    throw new ConfigError(`Invalid config ${configPath}:\n${issues}`);
+    throw new ConfigError(`Invalid config ${label}:\n${issues}`);
   }
   const cfg = parsed.data;
   for (const server of Object.values(cfg.servers)) {
