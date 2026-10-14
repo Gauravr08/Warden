@@ -35,10 +35,6 @@ OK-as-follow-up by the reviewers.
   and `path:*`-flagged values are persisted/exported raw. Consider redacting the
   offending substring for any `secret:`-flagged arg, or document the gap in the
   README threat model.
-- **Path root check lowercases both sides**, weakening comparison on
-  case-sensitive filesystems (`/Home/x` treated as inside `/home`). Compare
-  case-sensitively on non-Windows.
-- **`readBody` has no size cap** (localhost-only DoS surface). Bound it.
 - **`server.close()` may delay** on lingering keep-alive connections — relevant if
   `warden stop` / CLI shutdown ever needs prompt teardown.
 

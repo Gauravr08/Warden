@@ -72,6 +72,21 @@ turns that file into validated, typed objects.
   an unset environment variable). Also exports two helpers reused everywhere:
   `expandEnv(s)` (substitutes `${VAR}` from the environment) and `expandHome(p)`
   (expands a leading `~` to the home directory).
+  `parseConfigText(raw, label)` is the YAML-parse + schema-validate + env/home
+  expansion step, split out of `loadConfig` so the dashboard can validate
+  *unsaved* text with identical errors.
+
+### 3.1b `src/paths.ts` — shared path normalization
+
+One place that decides what "the same path" means, used by both the matcher and
+the scanner. `normalizePath(p, caseInsensitive)` expands `~`, converts
+backslashes, and — for absolute paths only — collapses `.`/`..`/duplicate slashes
+(the drive prefix is split off first so `..` can never climb above `C:/` or `/`),
+then lowercases only when `caseInsensitive` (default: Windows). This closes the
+case-change and `allowed/../private` bypasses of `args` deny rules and
+`allowed_roots`. Also exports `looksLikeAbsolutePath` (length/newline-capped, for
+the scanner) and `isAbsolutePathLike` (no cap, for matching — a cap would be a
+bypass).
 
 ### 3.2 `src/policy/` — the decision engine
 
@@ -122,15 +137,21 @@ Heuristic detectors. Honest about being heuristics (see the README threat model)
 
 ### 3.4 `src/audit/` — the notebook
 
-- **`store.ts`** (117 lines) — `AuditStore`, a thin wrapper over a SQLite database
+- **`store.ts`** (128 lines) — `AuditStore`, a thin wrapper over a SQLite database
   (`better-sqlite3`) at `~/.warden/audit.db`. One row per tool call: timestamp,
-  server, tool, redacted args, decision, matched rule, scanner flags, whether it
-  was forwarded, approval actor + latency, result size, duration, error.
+  server, tool, redacted args, decision, matched rule (`rule_index`), the decision
+  `reason`, scanner flags, whether it was forwarded, approval actor + latency,
+  result size, duration, error.
   Methods: `insert`, `query(filter)` (newest-first, used by the dashboard and
   `warden export`), `countForwardedSince` / `forwardedToolsSince` (used for rate
   limiting), `purgeOlderThan` (retention), `close`. `redactSecrets(text)` replaces
   any `SECRET_PATTERNS` match with `[REDACTED:<flag>]` **before** anything is
   written — secrets never hit disk in cleartext (pattern-matched ones, at least).
+  It also stores `policy_decision`: the policy verdict before rate limiting and
+  human input (`null` if policy never ran), used by `simulate`.
+  The constructor runs a backward-compatible `migrate()` that `ALTER TABLE`s in
+  the `reason` and `policy_decision` columns when opening an `audit.db` written by an older version, so
+  existing databases keep working without a manual rebuild.
 
 ### 3.5 `src/approval/` — the human gate
 
@@ -197,7 +218,35 @@ agent connects to) and wires the request handlers:
   as `Tool call failed: …` with `decision: allow, forwarded: true`, so the audit
   trail stays honest about who decided what.
 
-### 3.9 `src/dashboard/` — the localhost UI
+### 3.9 `src/simulate.ts` (120 lines) — dry-run against your history
+
+`simulate(cfg, records)` replays **recorded
+audit rows** against a **proposed** config and reports which past calls would
+change decision. `redecide` mirrors the gateway's policy pipeline exactly, calling
+the same engine functions — `evaluate` (base, first match wins), then
+`evaluateArgsPhase` (secret/path escalation; **deny only, never downgrades**) and
+`evaluateResultPhase` (injection escalation) — so the preview matches what the
+live gateway would decide. Rate limits and human clicks are **not** replayed; an
+escalation to `approve` is reported as its own outcome.
+
+It compares **policy verdict to policy verdict**, not final outcome. The audit
+`decision` column is the outcome *after* rate limiting and human clicks, so a call
+the user approved is stored as `allow`. `historicalPolicyDecision(r)` returns the
+verdict the policy gave at the time: the `policy_decision` column when present,
+otherwise it is inferred from the `reason` for older rows (human-decided → `approve`,
+`rate limit exceeded` → `allow`). Rows that never reached policy (unknown tool,
+internal error) are counted as `skipped`. Replaying an unchanged policy therefore
+reports zero changes — `tests/gateway.test.ts` proves this with a round-trip test.
+
+Each compared row is bucketed by its new verdict: `unchanged`, `nowDenied`,
+`nowAllowed`, `nowPrompt` (would now need approval). `approximate` counts rows whose
+stored args were redacted while the proposed policy has `match.args` rules (the
+replay may not match the original exactly). Each changed call is added to
+`changes` as `{ server, tool, from, to, reason, ruleIndex }`, so the new rule that
+caused it is named. `formatSimulation(result)` renders the human-readable report
+that `warden simulate` prints; `--json` emits the raw `SimResult` instead.
+
+### 3.10 `src/dashboard/` — the localhost UI
 
 - **`server.ts`** (132 lines) — `startDashboard(deps, port)`. A plain Node `http`
   server **bound to `127.0.0.1` only** (never network-exposed), with an
@@ -207,28 +256,46 @@ agent connects to) and wires the request handlers:
   (Server-Sent Events stream that pushes `pending`/`resolved`/`warning` live).
   Auto-increments the port if the preferred one is busy. `close()` tears down
   listeners and open SSE connections.
-- **`ui.ts`** (99 lines) — `DASHBOARD_HTML`, the entire single-page UI as one
+  With `deps.configPath` set (the CLI always sets it) it also serves the Policy
+  editor: `GET /api/policy` (`{yaml, hash}` — sha256 of the file text),
+  `POST /api/policy/preview` (parse with `parseConfigText`, return
+  `simulate()` over the last 5000 audit rows), and `POST /api/policy/apply`
+  (409 if `hash` is stale; 400 if the YAML is invalid or if `servers`, `audit`,
+  `dashboard` or `approval_timeout_ms` differ from the file on disk — a page must
+  never change which commands warden spawns; otherwise atomic write via
+  `<path>.tmp` + rename, which the existing `watchPolicies` hot-reloads).
+  **CSRF guard on every POST route:** `content-type` must be `application/json`
+  (forces a CORS preflight for cross-origin pages) and, if an `Origin` header is
+  present, it must be `http://127.0.0.1:<port>` or `http://localhost:<port>`;
+  otherwise 403. Request bodies are capped at 1 MB (413).
+- **`ui.ts`** (102 lines) — `DASHBOARD_HTML`, the entire single-page UI as one
   self-contained string (no external CSS/JS/CDN). Vanilla JS: renders the pending
-  cards (Approve / Deny / Always allow / Always deny) and the audit table,
-  refreshes on SSE events and every 5s. **All untrusted values are HTML-escaped**
-  before insertion (fixed XSS — a malicious tool arg can't run script in your
-  dashboard).
+  cards (Approve / Deny / Always allow / Always deny) and the audit table, whose
+  **Why** column shows each call's decision reason (the `reason`, falling back to
+  `rule #n`). A second **Policy** tab holds the YAML editor (edit → Preview
+  changes → Apply; Apply stays disabled until the *current* text has been
+  previewed), and a dismissible banner surfaces SSE `warning` events (e.g. a
+  broken manual edit). Refreshes on SSE events and every 5s. **All untrusted values are
+  HTML-escaped** before insertion (fixed XSS — a malicious tool arg can't run
+  script in your dashboard).
 
-### 3.10 `src/notify.ts` (13 lines) — the OS toast
+### 3.11 `src/notify.ts` (13 lines) — the OS toast
 
 - `notifyPending(p)` — fires a native OS notification (via `node-notifier`) when a
   call needs approval, so you notice without staring at the browser tab.
   Best-effort; never throws.
 
-### 3.11 `src/cli/` — the command-line entry
+### 3.12 `src/cli/` — the command-line entry
 
-- **`index.ts`** (72 lines) — the `commander` program. Subcommands:
+- **`index.ts`** (97 lines) — the `commander` program. Subcommands:
   - `warden start --config warden.yaml` — the main event: builds the whole stack
     and runs it.
+  - `warden simulate [--config <path>] [--json] [--limit <n>]` — replays recent
+    audit rows (`--limit`, default 5000) against the proposed config and prints
+    the report (or the raw `SimResult` with `--json`).
   - `warden status` — reads the state file, pings the dashboard health endpoint.
   - `warden export --config …` — dumps the audit log as JSONL to **stdout**
-    (the one place stdout is used for data, because that subcommand isn't the MCP
-    channel).
+    (data on stdout, because that subcommand isn't the MCP channel).
   - `warden import --client <kind>` — migrate a client config (see below).
 - **`start.ts`** (122 lines) — `startGateway(configPath, frontendTransport?)`, the
   wiring layer. Constructs audit + approvals + downstream + registry + gateway +
@@ -247,15 +314,15 @@ agent connects to) and wires the request handlers:
   `warden` so re-importing can't nest warden inside itself.
 
 **Import surface note:** stdout is the MCP protocol channel. Every human log in
-the whole codebase goes to `console.error` (stderr). The only deliberate stdout
-writer is `warden export`.
+the whole codebase goes to `console.error` (stderr). The deliberate stdout writers
+are `warden export` and `warden simulate`.
 
 ---
 
 ## 4. `tests/` — how each piece is proven
 
-One test file per module, plus integration and end-to-end. Total: 86 unit/
-integration tests + 1 real-process e2e, all green.
+One test file per module, plus integration and end-to-end. Run `npm test` for the
+current count; the real-process e2e runs only with `E2E=1`.
 
 | Test file | Proves |
 |-----------|--------|
@@ -263,6 +330,7 @@ integration tests + 1 real-process e2e, all green.
 | `config.test.ts` | config loads, defaults apply, bad YAML/schema/env errors are readable. |
 | `matcher.test.ts` | glob + dot-path arg matching, including bare `*`. |
 | `engine.test.ts` | first-match-wins, args-phase secret escalation, result-phase. |
+| `simulate.test.ts` | replay under a proposed policy: unchanged/now-denied/now-allowed/now-approval, secret + injection escalation, report format. |
 | `secrets.test.ts` | each secret flag fires; path boundary; unserializable guard. |
 | `injection.test.ts` | each injection flag fires; quiet on normal text. |
 | `audit.test.ts` | insert/query/redaction/rate-count/purge. |
@@ -279,7 +347,7 @@ integration tests + 1 real-process e2e, all green.
 
 ---
 
-## 5. `demo/` — the live playground (not committed yet)
+## 5. `demo/` — the live playground (committed)
 
 - **`warden.yaml`** — a demo policy: runs the echo fixture as a fake third-party
   server, allows nothing by default (so `echo` triggers an approval card), denies
@@ -287,7 +355,12 @@ integration tests + 1 real-process e2e, all green.
 - **`driver.mjs`** — pretends to be an AI agent. Spawns the real built warden,
   connects as an MCP client, and makes four calls (list → echo/approve →
   danger/deny → secret/deny) with pauses so you can watch the dashboard.
-- **`probe.mjs`** — a diagnostic used while debugging the port-fallback confusion.
+- **`warden-fs.yaml`** — the real-world demo: warden in front of the official
+  filesystem MCP server, which is given the whole sandbox while the policy allows
+  writes only under `allowed/`.
+- **`fs-driver.mjs`** — the agent driver for the filesystem demo. Proves warden
+  (not the server) blocks an out-of-scope write and a secret-bearing write, while
+  allowing an in-scope one.
 
 ---
 
