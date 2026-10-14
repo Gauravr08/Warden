@@ -31,4 +31,28 @@ describe("argsMatch", () => {
     expect(argsMatch({ path: "*" }, { path: "/a/b/c.txt" })).toBe(true);
     expect(argsMatch({ path: "*" }, { path: "C:\\x\\y.txt" })).toBe(true);
   });
+
+  it("matches paths case-insensitively only when caseInsensitive", () => {
+    const p = { path: "C:/users/asus/x/**" };
+    const a = { path: "C:/Users/ASUS/x/a.txt" };
+    expect(argsMatch(p, a, { caseInsensitive: true })).toBe(true);
+    expect(argsMatch(p, a, { caseInsensitive: false })).toBe(false);
+  });
+
+  it("keeps non-path strings case-sensitive even when caseInsensitive", () => {
+    expect(argsMatch({ name: "foo*" }, { name: "FOO bar" }, { caseInsensitive: true })).toBe(false);
+    expect(argsMatch({ name: "foo*" }, { name: "foo bar" }, { caseInsensitive: true })).toBe(true);
+  });
+
+  it("resolves .. before matching so deny rules can't be bypassed", () => {
+    const a = { path: "C:/s/allowed/../private/k.txt" };
+    expect(argsMatch({ path: "C:/s/private/**" }, a, { caseInsensitive: false })).toBe(true);
+    expect(argsMatch({ path: "C:/s/allowed/**" }, a, { caseInsensitive: false })).toBe(false);
+  });
+
+  it("deny-style pattern matches mixed case + dot-dot together", () => {
+    expect(
+      argsMatch({ path: "C:/s/private/**" }, { path: "C:/S/allowed/../PRIVATE/k" }, { caseInsensitive: true }),
+    ).toBe(true);
+  });
 });

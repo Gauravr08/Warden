@@ -1,5 +1,6 @@
 import picomatch from "picomatch";
 import { expandHome } from "../config/load.js";
+import { CASE_INSENSITIVE_FS, isAbsolutePathLike, normalizePath } from "../paths.js";
 
 export function globMatch(pattern: string, value: string): boolean {
   if (pattern === "*") return true;
@@ -22,11 +23,16 @@ function getPath(obj: unknown, dotted: string): unknown {
 export function argsMatch(
   pattern: Record<string, unknown>,
   args: Record<string, unknown>,
+  opts: { caseInsensitive?: boolean } = {},
 ): boolean {
+  const caseInsensitive = opts.caseInsensitive ?? CASE_INSENSITIVE_FS;
   for (const [key, expected] of Object.entries(pattern)) {
     const actual = getPath(args, key);
     if (typeof expected === "string" && typeof actual === "string") {
-      if (!globMatch(normalizePathlike(expected), normalizePathlike(actual))) return false;
+      const value = normalizePath(actual, false);
+      const nocase = caseInsensitive && isAbsolutePathLike(value);
+      if (expected === "*") continue;
+      if (!picomatch.isMatch(value, normalizePathlike(expected), { dot: true, nocase })) return false;
     } else if (actual !== expected) {
       return false;
     }

@@ -38,6 +38,18 @@ describe("path:outside-roots", () => {
     expect(scanArgs({ path: "/etc/passwd" })).toEqual([]);
   });
 
+  it("flags .. escapes out of the root", () => {
+    expect(scanArgs({ path: "/r/allowed/../private/x" }, { allowedRoots: ["/r/allowed"] }))
+      .toContain("path:outside-roots");
+  });
+
+  it("respects caseInsensitive for root containment", () => {
+    expect(scanArgs({ path: "/Home/x" }, { allowedRoots: ["/home"], caseInsensitive: false }))
+      .toContain("path:outside-roots");
+    expect(scanArgs({ path: "C:/USERS/a" }, { allowedRoots: ["c:/users"], caseInsensitive: true }))
+      .toEqual([]);
+  });
+
   it("does not treat sibling dirs sharing a prefix as inside the root", () => {
     expect(scanArgs({ path: "/home/me/projects-leak/id_rsa" }, { allowedRoots: ["/home/me/projects"] }))
       .toContain("path:outside-roots");

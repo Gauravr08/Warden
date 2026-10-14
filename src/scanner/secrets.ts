@@ -1,4 +1,4 @@
-import { expandHome } from "../config/load.js";
+import { CASE_INSENSITIVE_FS, looksLikeAbsolutePath, normalizePath } from "../paths.js";
 
 export const SECRET_PATTERNS: Array<{ flag: string; re: RegExp }> = [
   { flag: "secret:aws-access-key", re: /\bAKIA[0-9A-Z]{16}\b/ },
@@ -27,19 +27,14 @@ function walkStrings(value: unknown, visit: (s: string) => void): void {
     Object.values(value).forEach((v) => walkStrings(v, visit));
 }
 
-function normalized(p: string): string {
-  return expandHome(p).replace(/\\/g, "/").toLowerCase();
-}
-
-function looksLikeAbsolutePath(s: string): boolean {
-  return /^([A-Za-z]:[\\/]|\/)/.test(s) && !s.includes("\n") && s.length < 500;
-}
-
 function inside(p: string, root: string): boolean {
   return p === root || p.startsWith(root.endsWith("/") ? root : root + "/");
 }
 
-export function scanArgs(args: unknown, opts: { allowedRoots?: string[] } = {}): string[] {
+export function scanArgs(
+  args: unknown,
+  opts: { allowedRoots?: string[]; caseInsensitive?: boolean } = {},
+): string[] {
   const flags = new Set<string>();
   let text: string;
   try {
@@ -57,10 +52,11 @@ export function scanArgs(args: unknown, opts: { allowedRoots?: string[] } = {}):
     }
   }
 
-  const roots = opts.allowedRoots?.map(normalized);
+  const ci = opts.caseInsensitive ?? CASE_INSENSITIVE_FS;
+  const roots = opts.allowedRoots?.map((r) => normalizePath(r, ci));
   if (roots && roots.length > 0) {
     walkStrings(args, (s) => {
-      if (looksLikeAbsolutePath(s) && !roots.some((r) => inside(normalized(s), r))) {
+      if (looksLikeAbsolutePath(s) && !roots.some((r) => inside(normalizePath(s, ci), r))) {
         flags.add("path:outside-roots");
       }
     });
