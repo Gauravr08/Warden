@@ -79,7 +79,7 @@ export async function startGateway(
     const gateway = new Gateway({ config, configPath, downstream, registry, approvals, audit });
     await gateway.refreshTools();
 
-    dash = await startDashboard({ approvals, audit, configPath }, config.dashboard.port);
+    dash = await startDashboard({ approvals, audit, configPath, registry }, config.dashboard.port);
     console.error(`[warden] dashboard: http://127.0.0.1:${dash.port}`);
 
     stopWatch = watchPolicies(configPath, config, (msg) =>

@@ -7,6 +7,7 @@ import path from "node:path";
 import { startDashboard, type DashboardHandle } from "../src/dashboard/server.js";
 import { ApprovalManager } from "../src/approval/manager.js";
 import { AuditStore } from "../src/audit/store.js";
+import { ToolRegistry } from "../src/registry.js";
 import { DASHBOARD_HTML } from "../src/dashboard/ui.js";
 
 let approvals: ApprovalManager;
@@ -50,6 +51,13 @@ function rawRequest(
 }
 
 describe("dashboard", () => {
+  it("ships a syntactically valid dashboard script with the simple editor", () => {
+    const script = DASHBOARD_HTML.slice(DASHBOARD_HTML.indexOf("<script>") + 8, DASHBOARD_HTML.indexOf("</script>"));
+    expect(() => new Function(script)).not.toThrow();
+    expect(DASHBOARD_HTML).toContain('id="simple"');
+    expect(DASHBOARD_HTML).toContain("Add from template");
+  });
+
   it("serves html and health", async () => {
     const html = await fetch(api("/"));
     expect(html.status).toBe(200);
@@ -152,10 +160,10 @@ describe("dashboard Policy tab UI", () => {
   it("escapes every server value in the changes table and errors", () => {
     expect(DASHBOARD_HTML).toContain("esc(c.server)");
     expect(DASHBOARD_HTML).toContain("esc(c.tool)");
-    expect(DASHBOARD_HTML).toContain("esc(c.from)");
-    expect(DASHBOARD_HTML).toContain("esc(c.to)");
-    expect(DASHBOARD_HTML).toContain("esc(c.reason)");
-    expect(DASHBOARD_HTML).toContain("esc(c.ruleIndex)");
+    expect(DASHBOARD_HTML).toContain("verdict(c.from)");
+    expect(DASHBOARD_HTML).toContain("verdict(c.to)");
+    expect(DASHBOARD_HTML).toContain("esc(a ? a[1] : d)");
+    expect(DASHBOARD_HTML).toContain("esc(why)");
     expect(DASHBOARD_HTML).toContain("esc(e.message)");
     expect(DASHBOARD_HTML).toContain("esc(msg)");
     // the editor is filled via .value, never innerHTML
@@ -255,7 +263,7 @@ audit: { db_path: ":memory:" }
     const next = BASE.replace("action: allow", "action: deny");
     const res = await post("/api/policy/apply", JSON.stringify({ yaml: next, hash }));
     expect(res.status).toBe(200);
-    expect(res.json).toEqual({ ok: true, hash: sha(next) });
+    expect(res.json).toEqual({ ok: true, hash: sha(next), yaml: next });
     expect(readFileSync(cfgPath, "utf8")).toBe(next);
     expect(readdirSync(dir)).toEqual(["warden.yaml"]); // no stray .tmp
   });
@@ -324,6 +332,108 @@ audit: { db_path: ":memory:" }
     const big = JSON.stringify({ yaml: "#" + "a".repeat(1_100_000) });
     const res = await post("/api/policy/preview", big);
     expect(res.status).toBe(413);
+  });
+  it("GET /api/policy includes rules and a sorted catalog from the audit log", async () => {
+    seed("1", "write", "allow");
+    seed("2", "echo", "allow");
+    pAudit.insert({
+      id: "3", ts: 1, server: "unknown", tool: "x", argsJson: "{}", decision: "deny", ruleIndex: null, reason: "x",
+      flags: [], forwarded: false, policyDecision: "deny", approvalActor: null, approvalMs: null, resultBytes: null,
+      durationMs: 1, error: null,
+    });
+    const body = await getPolicy();
+    expect(body.rules).toEqual({
+      defaults: { action: "deny" },
+      policies: [{ match: { server: "echo", tool: "echo" }, action: "allow" }],
+      limits: [],
+      allowed_roots: [],
+    });
+    expect(body.catalog).toEqual({ servers: { echo: ["echo", "write"] } });
+  });
+
+  it("catalog merges the live registry", async () => {
+    const registry = new ToolRegistry();
+    registry.refresh(new Map([["git", [{ name: "status", inputSchema: { type: "object" } }]]]));
+    const d = await startDashboard(
+      { approvals: new ApprovalManager(5000), audit: pAudit, configPath: cfgPath, registry }, 0);
+    try {
+      const body = await (await fetch(`http://127.0.0.1:${d.port}/api/policy`)).json();
+      expect(body.catalog.servers.git).toEqual(["status"]);
+    } finally {
+      await d.close();
+    }
+  });
+
+  const RULES = {
+    defaults: { action: "approve" },
+    policies: [
+      { match: { args_contain_secret: true }, action: "deny" },
+      { match: { server: "echo", tool: "echo" }, action: "allow" },
+    ],
+    limits: [{ match: { tool: "echo" }, max_calls_per_hour: 5 }],
+    allowed_roots: ["~/projects"],
+  };
+
+  it("preview accepts rules and returns the merged yaml", async () => {
+    seed("1", "echo", "allow");
+    const res = await post("/api/policy/preview", JSON.stringify({ rules: RULES }));
+    expect(res.status).toBe(200);
+    expect(res.json.ok).toBe(true);
+    expect(res.json.result.total).toBe(1);
+    expect(res.json.yaml).toContain("command: node");
+    expect(res.json.yaml).toContain("~/projects");
+    expect(readFileSync(cfgPath, "utf8")).toBe(BASE);
+  });
+
+  it("apply with rules writes the merged file, keeps servers, returns the new hash", async () => {
+    const { hash } = await getPolicy();
+    const res = await post("/api/policy/apply", JSON.stringify({ rules: RULES, hash }));
+    expect(res.status).toBe(200);
+    const written = readFileSync(cfgPath, "utf8");
+    expect(res.json.hash).toBe(sha(written));
+    expect(res.json.yaml).toBe(written);
+    expect(written).toMatch(/args: \[ ?x\.mjs ?\]/);
+    expect(written).toContain("max_calls_per_hour: 5");
+    const body = await getPolicy();
+    expect(body.rules).toEqual(RULES);
+    const stale = await post("/api/policy/apply", JSON.stringify({ rules: RULES, hash }));
+    expect(stale.status).toBe(409);
+  });
+
+  it("rejects invalid rules with 400", async () => {
+    const bad = { ...RULES, defaults: { action: "nope" } };
+    const p = await post("/api/policy/preview", JSON.stringify({ rules: bad }));
+    expect(p.status).toBe(400);
+    expect(p.json.error).toContain("defaults");
+    const { hash } = await getPolicy();
+    expect((await post("/api/policy/apply", JSON.stringify({ rules: bad, hash }))).status).toBe(400);
+    expect((await post("/api/policy/render", JSON.stringify({ rules: bad }))).status).toBe(400);
+    expect(readFileSync(cfgPath, "utf8")).toBe(BASE);
+  });
+
+  it("render merges rules without writing; parse returns rules", async () => {
+    const r = await post("/api/policy/render", JSON.stringify({ rules: RULES }));
+    expect(r.status).toBe(200);
+    expect(r.json.ok).toBe(true);
+    expect(readFileSync(cfgPath, "utf8")).toBe(BASE);
+    const p = await post("/api/policy/parse", JSON.stringify({ yaml: r.json.yaml }));
+    expect(p.status).toBe(200);
+    expect(p.json.rules).toEqual(RULES);
+  });
+
+  it("parse of bad YAML or a non-string is 400", async () => {
+    const bad = await post("/api/policy/parse", JSON.stringify({ yaml: "policies: [" }));
+    expect(bad.status).toBe(400);
+    expect(bad.json.ok).toBe(false);
+    expect((await post("/api/policy/parse", JSON.stringify({ yaml: 5 }))).status).toBe(400);
+  });
+
+  it("new POST routes enforce the CSRF guard", async () => {
+    for (const p of ["/api/policy/render", "/api/policy/parse"]) {
+      const body = JSON.stringify({ rules: RULES, yaml: BASE });
+      expect((await post(p, body, { "content-type": "text/plain" })).status).toBe(403);
+      expect((await post(p, body, { "content-type": "application/json", origin: "http://evil.example" })).status).toBe(403);
+    }
   });
 });
 

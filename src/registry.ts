@@ -31,6 +31,12 @@ export class ToolRegistry {
     return [...this.byExposed.values()].map((e) => e.def);
   }
 
+  catalog(): Record<string, string[]> {
+    const out: Record<string, string[]> = {};
+    for (const e of this.byExposed.values()) (out[e.server] ??= []).push(e.original);
+    return out;
+  }
+
   resolve(exposedName: string): { server: string; tool: string } | undefined {
     const e = this.byExposed.get(exposedName);
     return e ? { server: e.server, tool: e.original } : undefined;

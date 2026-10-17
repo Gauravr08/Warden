@@ -65,7 +65,7 @@ export const DASHBOARD_HTML = `<!doctype html>
     margin: 0; background: var(--bg-0); color: var(--text);
     font: 14px/1.5 var(--sans); -webkit-font-smoothing: antialiased;
   }
-  button, input { font: inherit; color: inherit; }
+  button, input, select { font: inherit; color: inherit; }
   button { cursor: pointer; }
   button:disabled { cursor: not-allowed; opacity: .45; }
   :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -253,7 +253,10 @@ export const DASHBOARD_HTML = `<!doctype html>
   .steps li.done .n { background: var(--success-subtle); border-color: transparent; color: var(--success); }
   .policy-grid { display: grid; grid-template-columns: 1fr; gap: var(--s-4); margin-top: var(--s-4); align-items: start; }
   @media (min-width: 1000px) { .policy-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
-  .editor { padding: 0; overflow: hidden; }
+  .editor { padding: 0; }
+  .editor-bar { border-radius: var(--r-3) var(--r-3) 0 0; }
+  textarea#yaml { border-radius: 0; }
+  .editor-foot { position: sticky; bottom: 0; z-index: 5; background: var(--bg-1); border-radius: 0 0 var(--r-3) var(--r-3); }
   .editor-bar { display: flex; align-items: center; gap: var(--s-3); padding: 10px var(--s-3); border-bottom: 1px solid var(--border); background: var(--bg-2); }
   .editor-bar .name { font: 12px var(--mono); color: var(--text-2); }
   .unsaved { display: inline-flex; align-items: center; gap: 6px; color: var(--warning); font-size: 12px; font-weight: 600; margin-left: auto; }
@@ -265,7 +268,8 @@ export const DASHBOARD_HTML = `<!doctype html>
   .editor-foot { display: flex; flex-wrap: wrap; gap: var(--s-2); padding: var(--s-3); border-top: 1px solid var(--border); }
   .hint { color: var(--text-3); font-size: 12px; align-self: center; margin-left: auto; }
   .results { padding: var(--s-4); min-height: 200px; }
-  .results h3 { margin: 0 0 var(--s-3); font-size: 15px; font-weight: 650; }
+  .results .help { font-size: 13px; margin: 0 0 var(--s-3); }
+  .results h3 { margin: 0 0 2px; font-size: 15px; font-weight: 650; }
   .results .stats { grid-template-columns: repeat(2, 1fr); }
   .results .stat .value { font-size: 24px; }
   .notes { margin: var(--s-3) 0 0; color: var(--text-2); font-size: 12.5px; display: grid; gap: 2px; }
@@ -283,6 +287,55 @@ export const DASHBOARD_HTML = `<!doctype html>
   .callout.ok { background: var(--success-subtle); color: var(--success); border-color: var(--success-subtle); }
   .callout pre { margin: 0; white-space: pre-wrap; word-break: break-word; font: 12.5px/1.55 var(--mono); }
   #pmsg .callout:first-child { margin-top: var(--s-4); }
+
+  /* ---- simple editor ---- */
+  .field {
+    display: block; width: 100%; min-height: 36px; padding: 8px 10px; background: var(--bg-1); color: var(--text);
+    border: 1px solid var(--border); border-radius: var(--r-1); transition: border-color var(--ease), box-shadow var(--ease);
+  }
+  .field::placeholder { color: var(--text-3); }
+  .field:hover { border-color: var(--border-strong); }
+  .field:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-subtle); }
+  .field[aria-invalid="true"] { border-color: var(--danger-solid); }
+  .field.num { width: 90px; }
+  #simple { padding: var(--s-4); display: grid; gap: var(--s-5); background: var(--bg-0); }
+  .sgroup h3 { margin: 0 0 2px; font-size: 14px; font-weight: 650; }
+  .sgroup .help { font-size: 13px; margin-bottom: var(--s-3); }
+  .toolbar { display: flex; flex-wrap: wrap; gap: var(--s-2); align-items: center; }
+  .rule { padding: var(--s-3); display: grid; gap: var(--s-3); margin-top: var(--s-3); }
+  .rule-head { display: flex; align-items: center; gap: var(--s-2); }
+  .rule-head .grow, .limit-line .grow { flex: 1; }
+  .rule-head strong { font-weight: 650; }
+  .rule-tools { display: flex; gap: var(--s-2); margin-left: auto; }
+  select.pillsel { width: auto; min-height: 30px; padding: 3px 10px; border: 1px solid transparent; font-size: 13px; }
+  select.pillsel option { background: var(--bg-1); color: var(--text); }
+  .rule-sum { color: var(--text-2); font-size: 13px; }
+  .pair { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s-3); }
+  .fld { display: grid; gap: 4px; align-content: start; }
+  .fld label { font-size: 12px; font-weight: 600; color: var(--text-2); }
+  .conds { display: grid; gap: var(--s-2); }
+  .chk { display: flex; align-items: flex-start; gap: var(--s-2); cursor: pointer; min-height: 24px; }
+  .chk input { margin-top: 3px; width: 16px; height: 16px; accent-color: var(--accent-solid); }
+  .muted { color: var(--text-3); }
+  details.more > summary { cursor: pointer; color: var(--text-2); font-weight: 600; font-size: 13px; padding: 4px 0; }
+  .argrow { display: grid; grid-template-columns: 1fr auto 1fr auto; gap: var(--s-2); align-items: center; margin-top: var(--s-2); }
+  .argrow.ro { grid-template-columns: auto auto 1fr auto auto; font-size: 13px; }
+  .hintline { color: var(--text-3); font-size: 12px; margin: var(--s-2) 0; }
+  .menu { position: relative; }
+  .menu > summary { list-style: none; cursor: pointer; }
+  .menu > summary::-webkit-details-marker { display: none; }
+  .menu-list {
+    position: absolute; z-index: 10; top: 100%; left: 0; margin-top: 4px; min-width: 230px; padding: 4px; display: grid;
+    background: var(--bg-1); border: 1px solid var(--border-strong); border-radius: var(--r-2); box-shadow: var(--shadow-2);
+  }
+  .menu-list .btn { justify-content: flex-start; }
+  .roots { list-style: none; margin: 0 0 var(--s-3); padding: 0; display: grid; gap: var(--s-2); }
+  .roots li { display: flex; align-items: center; justify-content: space-between; gap: var(--s-2); padding: 4px 4px 4px 10px; background: var(--bg-1); border: 1px solid var(--border); border-radius: var(--r-1); }
+  .roots code { word-break: break-all; }
+  .addrow { display: flex; gap: var(--s-2); }
+  .limit-line { display: flex; align-items: center; gap: var(--s-2); flex-wrap: wrap; }
+  .limit-line label { font-size: 13px; color: var(--text-2); }
+  .empty-card { margin-top: var(--s-3); }
 
   /* ---- toasts ---- */
   #toasts { position: fixed; right: var(--s-4); bottom: var(--s-4); z-index: 50; display: grid; gap: var(--s-2); max-width: calc(100vw - 32px); }
@@ -312,6 +365,15 @@ export const DASHBOARD_HTML = `<!doctype html>
     .actions { display: grid; grid-template-columns: 1fr 1fr; }
     .actions .grow, .actions .divider { display: none; }
     .actions .btn { width: 100%; justify-content: center; }
+    .pair { grid-template-columns: 1fr; }
+    .field { min-height: 40px; }
+    .icon-btn { width: 40px; height: 40px; }
+    .rule-head { flex-wrap: wrap; }
+    .rule-tools { width: 100%; justify-content: flex-end; }
+    .argrow { grid-template-columns: 1fr; }
+    .argrow .icon-btn { justify-self: end; }
+    .rule .btn, #simple .btn { min-height: 40px; }
+    select.pillsel { min-height: 40px; }
   }
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { transition-duration: 0ms !important; animation-duration: 0ms !important; }
@@ -388,10 +450,15 @@ export const DASHBOARD_HTML = `<!doctype html>
   <div class="policy-grid">
     <div class="card editor">
       <div class="editor-bar">
-        <span class="name">warden.yaml</span>
+        <div class="seg" id="mode" role="group" aria-label="Editor mode">
+          <button type="button" data-v="simple" aria-pressed="true">Simple</button>
+          <button type="button" data-v="yaml" aria-pressed="false">YAML</button>
+        </div>
+        <span class="name" id="fname" hidden>warden.yaml</span>
         <span class="unsaved" id="unsaved" hidden>Unsaved edits</span>
       </div>
-      <textarea id="yaml" spellcheck="false" aria-label="Policy YAML"></textarea>
+      <div id="simple"></div>
+      <textarea id="yaml" spellcheck="false" aria-label="Policy YAML" hidden></textarea>
       <div class="editor-foot">
         <button class="btn primary" id="preview">Preview changes</button>
         <button class="btn success" id="apply" disabled>Apply</button>
@@ -422,6 +489,11 @@ const ICONS = {
   search: '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>',
   play: '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4v16l14-8z"/></svg>',
   sun: '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>',
+  up: '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m18 15-6-6-6 6"/></svg>',
+  down: '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>',
+  copy: '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/></svg>',
+  trash: '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14M10 11v6M14 11v6"/></svg>',
+  x: '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>',
   moon: '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>',
 };
 
@@ -676,11 +748,45 @@ let loadedText = "";
 let previewedText = null;
 let justApplied = false;
 
+let mode = "simple";
+try { if (localStorage.getItem("warden-policy-mode") === "yaml") mode = "yaml"; } catch (e) { /* storage unavailable */ }
+let rules = { defaults: { action: "approve" }, policies: [], limits: [], allowed_roots: [] };
+let catalog = { servers: {} };
+let loadedRulesText = "";
+let syncedRules = null;
+let newRoot = "";
+let pendingFocus = "";
+
+function cleanMatch(m) {
+  const o = {};
+  if (m.server) o.server = m.server;
+  if (m.tool) o.tool = m.tool;
+  if (m.args) {
+    const a = {};
+    Object.keys(m.args).forEach((k) => { if (k) a[k] = m.args[k]; });
+    if (Object.keys(a).length) o.args = a;
+  }
+  if (m.args_contain_secret !== undefined) o.args_contain_secret = m.args_contain_secret;
+  if (m.result_has_injection !== undefined) o.result_has_injection = m.result_has_injection;
+  return o;
+}
+function cleanRules(r) {
+  return {
+    defaults: { action: r.defaults.action },
+    policies: r.policies.map((p) => ({ match: cleanMatch(p.match || {}), action: p.action })),
+    limits: r.limits.map((l) => ({ match: cleanMatch(l.match || {}), max_calls_per_hour: l.max_calls_per_hour })),
+    allowed_roots: r.allowed_roots.slice(),
+  };
+}
+function curText() { return mode === "simple" ? JSON.stringify(cleanRules(rules)) : $("yaml").value; }
+function payload() { return mode === "simple" ? { rules: cleanRules(rules) } : { yaml: $("yaml").value }; }
+
 function syncApply() {
-  const text = $("yaml").value;
+  const text = curText();
+  const dirty = mode === "simple" ? text !== loadedRulesText : text !== loadedText;
   $("apply").disabled = previewedText === null || text !== previewedText;
-  $("unsaved").hidden = text === loadedText;
-  const step = justApplied && text === loadedText ? 3 : (previewedText !== null && text === previewedText ? 2 : 1);
+  $("unsaved").hidden = !dirty;
+  const step = justApplied && !dirty ? 3 : (previewedText !== null && text === previewedText ? 2 : 1);
   document.querySelectorAll("#steps li").forEach((li) => {
     const n = Number(li.getAttribute("data-step"));
     li.className = n < step || (step === 3 && n === 3) ? "done" : (n === step ? "current" : "");
@@ -700,6 +806,346 @@ function resultsPlaceholder() {
     "Replays your recorded calls against these rules and shows which decisions would change.", true);
 }
 
+// ---- simple editor ----
+const ACTIONS = [["allow", "Allow", "ok"], ["approve", "Ask me", "warn"], ["deny", "Block", "bad"]];
+const DEFAULT_HELP = {
+  allow: "Calls that no rule covers go through.",
+  approve: "You are asked before anything that no rule covers runs.",
+  deny: "Anything that no rule covers is blocked.",
+};
+const TEMPLATES = [
+  ["secrets", "Block secrets everywhere"],
+  ["allow", "Allow a tool"],
+  ["ask", "Ask before a tool"],
+  ["block", "Block a tool"],
+];
+
+function flag(o, k, v) {
+  if (v) Object.defineProperty(o, k, { value: true, writable: true, configurable: true, enumerable: false });
+  else delete o[k];
+}
+function setKey(o, k, v) { if (v === "" || v === undefined) delete o[k]; else o[k] = v; }
+function allTools() {
+  const s = {};
+  Object.keys(catalog.servers).forEach((n) => catalog.servers[n].forEach((t) => { s[t] = 1; }));
+  return Object.keys(s).sort();
+}
+function actionClass(a) { return ACTIONS.filter((x) => x[0] === a)[0][2]; }
+
+function targetText(m0) {
+  const m = { server: m0.server === "*" ? "" : m0.server, tool: m0.tool === "*" ? "" : m0.tool };
+  if (m.server && m.tool) return m.server + " › " + m.tool;
+  if (m.tool) return m.tool + " on any server";
+  if (m.server) return "any tool on " + m.server;
+  return "any tool on any server";
+}
+function summary(p) {
+  const m = p.match;
+  const cs = [];
+  if (m.args_contain_secret === true) cs.push("it contains a secret");
+  if (m.args_contain_secret === false) cs.push("it does not contain a secret");
+  if (m.result_has_injection === true) cs.push("the tool's reply looks like a prompt injection");
+  if (m.result_has_injection === false) cs.push("the tool's reply does not look like a prompt injection");
+  Object.keys(m.args || {}).forEach((k) => {
+    if (!k) return;
+    cs.push(k + " matches " + (typeof m.args[k] === "string" ? m.args[k] : "a custom value"));
+  });
+  const verb = p.action === "approve" ? "Ask me before " : (p.action === "deny" ? "Block " : "Allow ");
+  return verb + targetText(m) + (cs.length ? " when " + cs.join(" and ") : "") + ".";
+}
+
+function pick(id, label, val, list, other, f) {
+  if (val === "*" && !other) val = "";
+  const isOther = other || (val && list.indexOf(val) === -1);
+  let h = '<div class="fld"><label for="' + id + '">' + label + '</label><select class="field" id="' + id + '" data-f="' + f + '-sel">' +
+    '<option value=""' + (!val && !isOther ? " selected" : "") + ">Any " + label.toLowerCase() + "</option>";
+  list.forEach((x) => {
+    h += '<option value="' + esc(x) + '"' + (!isOther && x === val ? " selected" : "") + ">" + esc(x) + "</option>";
+  });
+  h += '<option value="__other__"' + (isOther ? " selected" : "") + ">Other&hellip;</option></select>";
+  if (isOther) {
+    h += '<input class="field" id="' + id + '-x" data-f="' + f + '" aria-label="' + label + ' name or pattern" ' +
+      'placeholder="e.g. git*" value="' + esc(val || "") + '" autocomplete="off">';
+  }
+  return h + "</div>";
+}
+function pairHtml(k, i, m) {
+  const tools = (m.server && catalog.servers[m.server]) || allTools();
+  return '<div class="pair">' + pick(k + i + "-server", "Server", m.server, Object.keys(catalog.servers), m._os, "server") +
+    pick(k + i + "-tool", "Tool", m.tool, tools, m._ot, "tool") + "</div>";
+}
+
+function tri(id, f, val, label) {
+  return '<label class="chk" for="' + id + '"><input type="checkbox" id="' + id + '" data-f="' + f + '" data-st="' +
+    (val === true ? "1" : (val === false ? "0" : "")) + '"' + (val === true ? " checked" : "") + "><span>" + label +
+    (val === false ? ' <em class="muted">' + "(set to 'not' in YAML)" + "</em>" : "") + "</span></label>";
+}
+
+function iconBtn(op, label, icon, extra) {
+  return '<button type="button" class="icon-btn" data-op="' + op + '" aria-label="' + esc(label) + '" title="' + esc(label) + '"' +
+    (extra || "") + ">" + ICONS[icon] + "</button>";
+}
+
+function argRows(m) {
+  const a = m.args || {};
+  return Object.keys(a).map((name, j) => {
+    if (typeof a[name] !== "string") {
+      return '<div class="argrow ro"><code>' + esc(name) + '</code><span class="muted">matches</span><code>' +
+        esc(JSON.stringify(a[name])) + '</code><span class="muted">edit in YAML</span>' +
+        iconBtn("delarg", "Remove condition", "x", ' data-j="' + j + '"') + "</div>";
+    }
+    return '<div class="argrow"><input class="field" data-f="argname" data-j="' + j + '" value="' + esc(name) +
+      '" aria-label="Argument name" placeholder="argument name" autocomplete="off"><span class="muted">matches</span>' +
+      '<input class="field" data-f="argval" data-j="' + j + '" value="' + esc(a[name]) +
+      '" aria-label="Pattern" placeholder="pattern" autocomplete="off">' +
+      iconBtn("delarg", "Remove condition", "x", ' data-j="' + j + '"') + "</div>";
+  }).join("");
+}
+
+function ruleCard(p, i, n) {
+  const m = p.match;
+  const id = "p" + i;
+  const opts = ACTIONS.map((a) => '<option value="' + a[0] + '"' + (p.action === a[0] ? " selected" : "") + ">" + a[1] + "</option>").join("");
+  return '<div class="card rule" data-k="p" data-i="' + i + '">' +
+    '<div class="rule-head"><strong>Rule ' + (i + 1) + "</strong>" +
+    '<select class="pill pillsel ' + actionClass(p.action) + '" id="' + id + '-action" data-f="action" aria-label="Rule ' + (i + 1) + ' action">' + opts + "</select>" +
+    '<span class="rule-tools">' +
+    iconBtn("up", "Move rule " + (i + 1) + " up", "up", ' id="' + id + '-up"' + (i === 0 ? " disabled" : "")) +
+    iconBtn("down", "Move rule " + (i + 1) + " down", "down", ' id="' + id + '-down"' + (i === n - 1 ? " disabled" : "")) +
+    iconBtn("dup", "Duplicate rule " + (i + 1), "copy", ' id="' + id + '-dup"') +
+    iconBtn("del", "Delete rule " + (i + 1), "trash", ' id="' + id + '-del"') + "</span></div>" +
+    '<div class="rule-sum">' + esc(summary(p)) + "</div>" +
+    pairHtml("p", i, m) +
+    '<div class="conds">' +
+    tri(id + "-secret", "secret", m.args_contain_secret, "Only if it contains a secret or a file path outside your allowed folders") +
+    tri(id + "-inj", "inj", m.result_has_injection, "Only if the tool's reply looks like a prompt injection") + "</div>" +
+    '<details class="more" data-key="' + id + '"><summary>More conditions</summary>' +
+    argRows(m) +
+    '<div class="hintline">e.g. path matches ~/projects/**</div>' +
+    '<button type="button" class="btn ghost" data-op="addarg" id="' + id + '-addarg">+ Add condition</button></details></div>';
+}
+
+function defaultsHtml() {
+  const d = rules.defaults.action;
+  return '<section class="sgroup"><h3>When no rule matches</h3><p class="help">' + esc(DEFAULT_HELP[d]) + "</p>" +
+    '<div class="seg" role="group" aria-label="When no rule matches">' +
+    ACTIONS.map((a) => '<button type="button" data-op="default" data-v="' + a[0] + '" aria-pressed="' + (d === a[0]) + '">' + a[1] + "</button>").join("") +
+    "</div></section>";
+}
+function rulesHtml() {
+  const n = rules.policies.length;
+  return '<section class="sgroup"><h3>Rules</h3>' +
+    '<p class="help">Checked top to bottom; the first rule that fits decides. Block rules about secrets always win.</p>' +
+    '<div class="toolbar"><button type="button" class="btn" data-op="addrule" id="addrule">+ Add rule</button>' +
+    '<details class="menu"><summary class="btn">Add from template</summary><div class="menu-list">' +
+    TEMPLATES.map((t) => '<button type="button" class="btn ghost" data-op="tmpl" data-v="' + t[0] + '">' + t[1] + "</button>").join("") +
+    "</div></details></div>" +
+    (n ? rules.policies.map((p, i) => ruleCard(p, i, n)).join("")
+       : '<div class="card empty-card">' + emptyState("inbox", "No rules yet", "Add a rule to allow, ask about or block specific tools.", true) + "</div>") +
+    "</section>";
+}
+function rootsHtml() {
+  return '<section class="sgroup"><h3>Allowed folders</h3>' +
+    '<p class="help">Requests that point at files outside these folders are treated like secrets. Leave empty to skip the check.</p>' +
+    (rules.allowed_roots.length
+      ? '<ul class="roots">' + rules.allowed_roots.map((r, i) =>
+        "<li><code>" + esc(r) + "</code>" + iconBtn("delroot", "Remove folder " + r, "x", ' data-i="' + i + '"') + "</li>").join("") + "</ul>"
+      : "") +
+    '<div class="addrow"><label class="sr-only" for="newroot">Folder path</label>' +
+    '<input class="field" id="newroot" placeholder="e.g. ~/projects" value="' + esc(newRoot) + '" autocomplete="off">' +
+    '<button type="button" class="btn" data-op="addroot">Add</button></div></section>';
+}
+function limitsHtml() {
+  return '<section class="sgroup"><h3>Rate limits</h3><p class="help">Allowed calls beyond this are blocked.</p>' +
+    rules.limits.map((l, i) =>
+      '<div class="card rule" data-k="l" data-i="' + i + '">' + pairHtml("l", i, l.match) +
+      '<div class="limit-line"><label for="l' + i + '-max">At most</label>' +
+      '<input class="field num" type="number" min="1" step="1" id="l' + i + '-max" data-f="max" value="' +
+      esc(l.max_calls_per_hour === undefined ? "" : l.max_calls_per_hour) + '"><span>calls per hour</span><span class="grow"></span>' +
+      iconBtn("dellimit", "Remove limit " + (i + 1), "x") + "</div></div>").join("") +
+    '<div class="toolbar"><button type="button" class="btn" data-op="addlimit">+ Add limit</button></div></section>';
+}
+
+function renderSimple() {
+  const root = $("simple");
+  const active = pendingFocus || (document.activeElement && root.contains(document.activeElement) ? document.activeElement.id : "");
+  pendingFocus = "";
+  const open = {};
+  root.querySelectorAll("details.more").forEach((d) => { open[d.getAttribute("data-key")] = d.open; });
+  const top = root.scrollTop;
+  root.innerHTML = defaultsHtml() + rulesHtml() + rootsHtml() + limitsHtml();
+  root.querySelectorAll('input[data-st="0"]').forEach((e) => { e.indeterminate = true; });
+  root.querySelectorAll("details.more").forEach((d) => { if (open[d.getAttribute("data-key")]) d.open = true; });
+  root.scrollTop = top;
+  if (active) {
+    const el = $(active);
+    if (el && !el.disabled) el.focus();
+  }
+}
+function touched() { justApplied = false; renderSimple(); syncApply(); }
+
+function matchOf(k, i) { return k === "p" ? rules.policies[i].match : rules.limits[i].match; }
+
+$("simple").addEventListener("click", (ev) => {
+  const b = ev.target.closest("[data-op]");
+  if (!b) return;
+  const op = b.getAttribute("data-op");
+  const c = b.closest("[data-k]");
+  const k = c ? c.getAttribute("data-k") : "";
+  const i = c ? Number(c.getAttribute("data-i")) : -1;
+  const ps = rules.policies;
+  if (op === "default") rules.defaults.action = b.getAttribute("data-v");
+  else if (op === "up" || op === "down") {
+    const j = op === "up" ? i - 1 : i + 1;
+    if (j < 0 || j >= ps.length) return;
+    const t = ps[i]; ps[i] = ps[j]; ps[j] = t;
+    const more = op === "up" ? j > 0 : j < ps.length - 1;
+    pendingFocus = "p" + j + "-" + (more ? op : (op === "up" ? "down" : "up"));
+  } else if (op === "dup") {
+    ps.splice(i + 1, 0, JSON.parse(JSON.stringify(ps[i])));
+    pendingFocus = "p" + (i + 1) + "-dup";
+  } else if (op === "del") ps.splice(i, 1);
+  else if (op === "addrule") {
+    ps.push({ match: {}, action: "approve" });
+    pendingFocus = "p" + (ps.length - 1) + "-server";
+  } else if (op === "tmpl") {
+    const t = b.getAttribute("data-v");
+    if (t === "secrets") { ps.unshift({ match: { args_contain_secret: true }, action: "deny" }); pendingFocus = "p0-server"; }
+    else {
+      ps.push({ match: {}, action: t === "allow" ? "allow" : (t === "ask" ? "approve" : "deny") });
+      pendingFocus = "p" + (ps.length - 1) + "-server";
+    }
+  } else if (op === "addarg") {
+    const m = matchOf(k, i);
+    const a = m.args || {};
+    if (!("" in a)) a[""] = "";
+    m.args = a;
+    c.querySelector("details.more").open = true;
+    renderSimple();
+    const rows = $("simple").querySelectorAll('[data-k="p"][data-i="' + i + '"] input[data-f="argname"]');
+    for (let x = 0; x < rows.length; x++) if (rows[x].value === "") rows[x].focus();
+    justApplied = false;
+    syncApply();
+    return;
+  } else if (op === "delarg") {
+    const m = matchOf(k, i);
+    delete m.args[Object.keys(m.args)[Number(b.getAttribute("data-j"))]];
+  } else if (op === "addroot") {
+    const v = $("newroot").value.trim();
+    if (!v) return;
+    if (rules.allowed_roots.indexOf(v) === -1) rules.allowed_roots.push(v);
+    newRoot = "";
+    pendingFocus = "newroot";
+  } else if (op === "delroot") rules.allowed_roots.splice(Number(b.getAttribute("data-i")), 1);
+  else if (op === "addlimit") {
+    rules.limits.push({ match: {}, max_calls_per_hour: 100 });
+    pendingFocus = "l" + (rules.limits.length - 1) + "-server";
+  } else if (op === "dellimit") rules.limits.splice(i, 1);
+  else return;
+  touched();
+});
+
+$("simple").addEventListener("input", (ev) => {
+  const e = ev.target;
+  if (e.id === "newroot") { newRoot = e.value; return; }
+  const f = e.getAttribute("data-f");
+  const c = e.closest("[data-k]");
+  if (!f || !c) return;
+  const k = c.getAttribute("data-k");
+  const i = Number(c.getAttribute("data-i"));
+  const m = matchOf(k, i);
+  if (f === "server" || f === "tool") setKey(m, f, e.value.trim());
+  else if (f === "max") {
+    if (e.value === "") delete rules.limits[i].max_calls_per_hour;
+    else rules.limits[i].max_calls_per_hour = Number(e.value);
+  } else if (f === "argname") {
+    const a = m.args;
+    const keys = Object.keys(a);
+    const j = Number(e.getAttribute("data-j"));
+    if (e.value !== keys[j] && keys.indexOf(e.value) !== -1) { e.setAttribute("aria-invalid", "true"); return; }
+    e.removeAttribute("aria-invalid");
+    const o = {};
+    keys.forEach((kk, x) => { o[x === j ? e.value : kk] = a[kk]; });
+    m.args = o;
+  } else if (f === "argval") {
+    const keys = Object.keys(m.args);
+    m.args[keys[Number(e.getAttribute("data-j"))]] = e.value;
+  } else return;
+  if (k === "p") c.querySelector(".rule-sum").textContent = summary(rules.policies[i]);
+  justApplied = false;
+  syncApply();
+});
+
+$("simple").addEventListener("change", (ev) => {
+  const e = ev.target;
+  const f = e.getAttribute("data-f");
+  const c = e.closest("[data-k]");
+  if (!f || !c) return;
+  const k = c.getAttribute("data-k");
+  const i = Number(c.getAttribute("data-i"));
+  const m = matchOf(k, i);
+  if (f === "action") rules.policies[i].action = e.value;
+  else if (f === "secret") setKey(m, "args_contain_secret", e.checked ? true : undefined);
+  else if (f === "inj") setKey(m, "result_has_injection", e.checked ? true : undefined);
+  else if (f === "server-sel") {
+    if (e.value === "__other__") { delete m.server; flag(m, "_os", true); pendingFocus = e.id + "-x"; }
+    else {
+      flag(m, "_os", false);
+      setKey(m, "server", e.value);
+      if (e.value && m.tool && !m._ot && allTools().indexOf(m.tool) !== -1 && (catalog.servers[e.value] || []).indexOf(m.tool) === -1) delete m.tool;
+    }
+  } else if (f === "tool-sel") {
+    if (e.value === "__other__") { delete m.tool; flag(m, "_ot", true); pendingFocus = e.id + "-x"; }
+    else { flag(m, "_ot", false); setKey(m, "tool", e.value); }
+  } else return;
+  touched();
+});
+
+$("simple").addEventListener("keydown", (ev) => {
+  if (ev.key === "Enter" && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); $("preview").click(); return; }
+  if (ev.key === "Enter" && ev.target.id === "newroot") {
+    ev.preventDefault();
+    const b = $("simple").querySelector('[data-op="addroot"]');
+    if (b) b.click();
+  }
+});
+
+function paintMode() {
+  $("simple").hidden = mode !== "simple";
+  $("yaml").hidden = mode !== "yaml";
+  $("fname").hidden = mode === "simple";
+  document.querySelectorAll("#mode button").forEach((b) => {
+    b.setAttribute("aria-pressed", String(b.getAttribute("data-v") === mode));
+  });
+  if (mode === "simple") renderSimple();
+}
+
+async function setMode(next) {
+  if (next === mode) return;
+  try {
+    if (next === "yaml") {
+      if (curText() !== syncedRules) $("yaml").value = (await pcall("/api/policy/render", { rules: cleanRules(rules) })).yaml;
+    } else {
+      rules = (await pcall("/api/policy/parse", { yaml: $("yaml").value })).rules;
+      syncedRules = JSON.stringify(cleanRules(rules));
+    }
+  } catch (e) {
+    $("pmsg").innerHTML = errBox(esc(e.message));
+    return;
+  }
+  $("pmsg").innerHTML = "";
+  mode = next;
+  try { localStorage.setItem("warden-policy-mode", mode); } catch (e) { /* storage unavailable */ }
+  previewedText = null;
+  resultsPlaceholder();
+  paintMode();
+  syncApply();
+}
+$("mode").addEventListener("click", (ev) => {
+  const b = ev.target.closest("button[data-v]");
+  if (b) setMode(b.getAttribute("data-v"));
+});
+
 async function loadPolicy() {
   resultsPlaceholder();
   previewedText = null;
@@ -711,11 +1157,23 @@ async function loadPolicy() {
     $("yaml").value = j.yaml;
     loadedText = j.yaml;
     loadedHash = j.hash;
+    catalog = j.catalog || { servers: {} };
     policyLoaded = true;
     $("pmsg").innerHTML = "";
+    if (j.rules) {
+      rules = j.rules;
+      loadedRulesText = JSON.stringify(cleanRules(rules));
+      syncedRules = loadedRulesText;
+    } else {
+      loadedRulesText = "";
+      syncedRules = null;
+      mode = "yaml";
+      $("pmsg").innerHTML = errBox(esc("This file has errors, so only the YAML editor is available. Fix them there, then switch back to Simple."));
+    }
   } catch (e) {
     $("pmsg").innerHTML = errBox(esc(e.message));
   }
+  paintMode();
   syncApply();
 }
 
@@ -731,27 +1189,42 @@ async function pcall(path, body) {
   return j;
 }
 
-function changeRow(c) {
+function verdict(d) {
+  const a = ACTIONS.filter((x) => x[0] === d)[0];
+  return '<span class="pill ' + decClass(d) + '">' + esc(a ? a[1] : d) + "</span>";
+}
+function changeRow(g) {
+  const c = g.c;
+  const why = c.ruleIndex == null
+    ? (c.reason === "default action" ? "No rule matches, so the default applies" : c.reason)
+    : (mode === "simple" ? "Rule " + (c.ruleIndex + 1) : "rule #" + c.ruleIndex) + " decides";
   return '<li><div class="line">' +
     '<span class="mono">' + esc(c.server) + " / " + esc(c.tool) + "</span>" +
-    '<span class="pill ' + decClass(c.from) + '">' + esc(c.from) + "</span>" +
-    '<span class="arrow">&rarr;</span>' +
-    '<span class="pill ' + decClass(c.to) + '">' + esc(c.to) + "</span>" +
-    '<span class="rule">' + (c.ruleIndex == null ? "" : "rule #" + esc(c.ruleIndex)) + "</span></div>" +
-    '<div class="why">' + esc(c.reason) + "</div></li>";
+    verdict(c.from) + '<span class="arrow">&rarr;</span>' + verdict(c.to) +
+    '<span class="rule">' + (g.n > 1 ? esc(g.n) + " calls" : "1 call") + "</span></div>" +
+    '<div class="why">' + esc(why) + "</div></li>";
+}
+function groupChanges(changes) {
+  const by = new Map();
+  changes.forEach((c) => {
+    const k = [c.server, c.tool, c.from, c.to, c.ruleIndex, c.reason].join("|");
+    const g = by.get(k);
+    if (g) g.n++; else by.set(k, { c: c, n: 1 });
+  });
+  return Array.from(by.values());
 }
 
 function renderResult(s) {
-  let html = '<h3>Preview</h3><div class="stats">' +
+  let html = '<h3>What would have changed</h3><p class="help">Your last recorded calls, replayed against these rules.</p><div class="stats">' +
     tile("Unchanged", s.unchanged, "info") + tile("Now allowed", s.nowAllowed, "ok") +
-    tile("Now denied", s.nowDenied, "bad") + tile("Now need approval", s.nowPrompt, "warn") + "</div>";
+    tile("Now blocked", s.nowDenied, "bad") + tile("Now asks you", s.nowPrompt, "warn") + "</div>";
   const notes = [];
-  if (s.skipped > 0) notes.push("<div>" + esc(s.skipped) + " skipped</div>");
-  if (s.approximate > 0) notes.push("<div>" + esc(s.approximate) + " approximate (redacted args)</div>");
+  if (s.skipped > 0) notes.push("<div>" + esc(s.skipped) + " calls skipped (not enough detail recorded)</div>");
+  if (s.approximate > 0) notes.push("<div>" + esc(s.approximate) + " calls estimated (secrets were hidden in the log)</div>");
   if (notes.length) html += '<div class="notes">' + notes.join("") + "</div>";
   html += s.changes.length === 0
     ? callout("ok", "No past calls would change. Safe to apply.")
-    : '<ul class="changes">' + s.changes.map(changeRow).join("") + "</ul>";
+    : '<ul class="changes">' + groupChanges(s.changes).map(changeRow).join("") + "</ul>";
   $("presult").innerHTML = html;
 }
 
@@ -772,11 +1245,12 @@ $("yaml").addEventListener("keydown", (ev) => {
 $("yaml").addEventListener("blur", () => { tabEscapes = false; });
 
 $("preview").onclick = async () => {
-  const text = $("yaml").value;
+  const text = curText();
   $("pmsg").innerHTML = "";
   try {
-    const j = await pcall("/api/policy/preview", { yaml: text });
+    const j = await pcall("/api/policy/preview", payload());
     renderResult(j.result);
+    if (window.matchMedia("(max-width: 999px)").matches) $("presult").scrollIntoView({ behavior: "smooth", block: "start" });
     previewedText = text;
   } catch (e) {
     resultsPlaceholder();
@@ -787,12 +1261,22 @@ $("preview").onclick = async () => {
 };
 
 $("apply").onclick = async () => {
-  const text = $("yaml").value;
+  const text = curText();
   if (text !== previewedText) return;
   try {
-    const j = await pcall("/api/policy/apply", { yaml: text, hash: loadedHash });
+    const j = await pcall("/api/policy/apply", Object.assign(payload(), { hash: loadedHash }));
     loadedHash = j.hash;
-    loadedText = text;
+    loadedText = j.yaml;
+    $("yaml").value = j.yaml;
+    if (mode === "simple") {
+      loadedRulesText = text;
+      syncedRules = text;
+    } else {
+      syncedRules = null;
+      try {
+        loadedRulesText = JSON.stringify(cleanRules((await pcall("/api/policy/parse", { yaml: j.yaml })).rules));
+      } catch (e) { loadedRulesText = ""; }
+    }
     previewedText = null;
     justApplied = true;
     say("ok", "Applied — warden is using these rules now.");

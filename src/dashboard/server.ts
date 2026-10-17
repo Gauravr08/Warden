@@ -6,6 +6,8 @@ import { isDeepStrictEqual } from "node:util";
 import { parseConfigText } from "../config/load.js";
 import type { WardenConfig } from "../config/schema.js";
 import { simulate } from "../simulate.js";
+import { applyRulesToText, rulesFromText } from "../policy/rules-doc.js";
+import type { ToolRegistry } from "../registry.js";
 import type { ApprovalAction, ApprovalManager } from "../approval/manager.js";
 import type { AuditStore } from "../audit/store.js";
 import { DASHBOARD_HTML } from "./ui.js";
@@ -69,27 +71,50 @@ function csrfOk(req: http.IncomingMessage, port: number): boolean {
 const RESTRICTED_MSG =
   "Only policies, limits, defaults and scanner can be changed here — edit servers/audit/dashboard in the file directly.";
 
-function policyPreview(deps: DashboardDeps, yaml: unknown): { status: number; body: unknown } {
-  if (typeof yaml !== "string") return { status: 400, body: { ok: false, error: "yaml must be a string" } };
+// Resolves the YAML to act on: raw text, or the current file with UI rules merged in.
+function resolveYaml(configPath: string, b: Record<string, unknown>): string {
+  if (b.rules !== undefined) return applyRulesToText(readFileSync(configPath, "utf8"), b.rules);
+  if (typeof b.yaml !== "string") throw new HttpError(400, "yaml must be a string");
+  return b.yaml;
+}
+
+function policyPreview(deps: DashboardDeps, configPath: string, b: Record<string, unknown>): { status: number; body: unknown } {
   try {
+    const yaml = resolveYaml(configPath, b);
     const cfg = parseConfigText(yaml, "warden.yaml");
-    return { status: 200, body: { ok: true, result: simulate(cfg, deps.audit.query({ limit: 5000 })) } };
+    return { status: 200, body: { ok: true, yaml, result: simulate(cfg, deps.audit.query({ limit: 5000 })) } };
   } catch (e) {
     return { status: 400, body: { ok: false, error: (e as Error).message } };
   }
 }
 
-function policyApply(configPath: string, yaml: unknown, hash: unknown): { status: number; body: unknown } {
-  if (typeof yaml !== "string" || typeof hash !== "string") {
+function catalog(deps: DashboardDeps): { servers: Record<string, string[]> } {
+  const sets = new Map<string, Set<string>>();
+  const add = (s: string, t: string) => {
+    if (!sets.has(s)) sets.set(s, new Set());
+    sets.get(s)!.add(t);
+  };
+  for (const [s, tools] of Object.entries(deps.registry?.catalog() ?? {})) for (const t of tools) add(s, t);
+  for (const r of deps.audit.query({ limit: 5000 })) if (r.server !== "unknown") add(r.server, r.tool);
+  const servers: Record<string, string[]> = {};
+  for (const s of [...sets.keys()].sort()) servers[s] = [...sets.get(s)!].sort();
+  return { servers };
+}
+
+function policyApply(configPath: string, b: Record<string, unknown>): { status: number; body: unknown } {
+  const hash = b.hash;
+  if (typeof hash !== "string" || (b.rules === undefined && typeof b.yaml !== "string")) {
     return { status: 400, body: { ok: false, error: "yaml and hash must be strings" } };
   }
   const current = readFileSync(configPath, "utf8");
   if (hash !== sha256(current)) {
     return { status: 409, body: { ok: false, error: "warden.yaml changed since you loaded it — reload and re-apply" } };
   }
+  let yaml: string;
   let next: WardenConfig;
   let cur: WardenConfig;
   try {
+    yaml = resolveYaml(configPath, b);
     next = parseConfigText(yaml, "warden.yaml");
     cur = parseConfigText(current, "warden.yaml");
   } catch (e) {
@@ -104,7 +129,7 @@ function policyApply(configPath: string, yaml: unknown, hash: unknown): { status
   // Write in place (not tmp+rename): fs.watch on Linux/macOS follows the inode, so a
   // rename would silently stop hot-reload for every later edit.
   writeFileSync(configPath, yaml);
-  return { status: 200, body: { ok: true, hash: sha256(yaml) } };
+  return { status: 200, body: { ok: true, hash: sha256(yaml), yaml } };
 }
 
 function isLoopbackHost(hostHeader: string): boolean {
@@ -146,6 +171,7 @@ export interface DashboardDeps {
   approvals: ApprovalManager;
   audit: AuditStore;
   configPath?: string;
+  registry?: ToolRegistry;
 }
 
 export async function startDashboard(
@@ -179,13 +205,29 @@ export async function startDashboard(
       const configPath = deps.configPath;
       if (configPath && req.method === "GET" && url.pathname === "/api/policy") {
         const yaml = readFileSync(configPath, "utf8");
-        json(res, 200, { yaml, hash: sha256(yaml) });
+        let rules = null;
+        try { rules = rulesFromText(yaml); } catch { /* unparsable file: UI falls back to YAML mode */ }
+        json(res, 200, { yaml, hash: sha256(yaml), rules, catalog: catalog(deps) });
       } else if (configPath && req.method === "POST" && url.pathname === "/api/policy/preview") {
-        const out = policyPreview(deps, (await readJson(req)).yaml);
+        const out = policyPreview(deps, configPath, await readJson(req));
         json(res, out.status, out.body);
-      } else if (configPath && req.method === "POST" && url.pathname === "/api/policy/apply") {
+      } else if (configPath && req.method === "POST" && url.pathname === "/api/policy/render") {
         const b = await readJson(req);
-        const out = policyApply(configPath, b.yaml, b.hash);
+        try {
+          json(res, 200, { ok: true, yaml: applyRulesToText(readFileSync(configPath, "utf8"), b.rules) });
+        } catch (e) {
+          json(res, 400, { ok: false, error: (e as Error).message });
+        }
+      } else if (configPath && req.method === "POST" && url.pathname === "/api/policy/parse") {
+        const b = await readJson(req);
+        try {
+          if (typeof b.yaml !== "string") throw new Error("yaml must be a string");
+          json(res, 200, { ok: true, rules: rulesFromText(b.yaml) });
+        } catch (e) {
+          json(res, 400, { ok: false, error: (e as Error).message });
+        }
+      } else if (configPath && req.method === "POST" && url.pathname === "/api/policy/apply") {
+        const out = policyApply(configPath, await readJson(req));
         json(res, out.status, out.body);
       } else if (req.method === "GET" && url.pathname === "/") {
         res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
