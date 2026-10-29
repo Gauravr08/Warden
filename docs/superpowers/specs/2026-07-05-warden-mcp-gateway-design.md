@@ -90,6 +90,7 @@ Semantics:
 - Rules evaluated top to bottom; first match wins; no match → `defaults.action`.
 - `tool` and `server` match by glob. `args` matches dot-path keys into the call arguments; glob for string values, exact equality otherwise.
 - Scanner verdicts are exposed as match conditions (`args_contain_secret`, `result_has_injection`) so consequences are policy-driven, not hardcoded.
+- **Secret/path escalation wins over order (defense-in-depth).** First-match-wins governs the ordinary case, but a matching `args_contain_secret`-conditioned `deny` rule escalates the decision to `deny` even when an earlier, more permissive rule already matched — a broad `allow` can never leak a flagged secret. This mirrors the result-phase injection escalation (`evaluateResultPhase`) and is implemented as a symmetric `evaluateArgsPhase`. Escalation only ever raises `allow`→`deny`; it never downgrades a `deny`, and an explicit `args_contain_secret: true, action: allow` rule simply declines to escalate rather than forcing an allow. Same rule for `path:`-flagged args. This resolves the tension between "first match wins" and the shipped `{ tool: "*", args_contain_secret: true } deny` catch-all: the catch-all is effective regardless of where the user places their `allow` rules.
 - Rate limits are checked after a policy `allow`; exceeding a limit converts the decision to `deny` with a rate-limit error.
 - Engine is a pure function (plus a SQLite counter read for limits) — table-driven unit tests.
 - Hot reload: file watcher re-validates on change; invalid file keeps last-good policy and surfaces a dashboard warning. Invalid file at startup refuses to start with a line-numbered error.
@@ -103,7 +104,7 @@ Semantics:
 
 ## 5. Scanner (v1 = heuristic tier)
 
-- **Outbound args:** regex bank for secret shapes (AWS keys, GitHub tokens, private-key headers, JWTs), high-entropy string detector, absolute paths outside allowed roots (configured via a `scanner.allowed_roots` list in `warden.yaml`; unset means the path check is disabled).
+- **Outbound args:** regex bank for secret shapes (AWS keys, GitHub tokens, private-key headers, JWTs), high-entropy string detector, absolute paths outside allowed roots (configured via a `scanner.allowed_roots` list in `warden.yaml`; unset means the path check is disabled). Arguments that cannot be JSON-serialized are flagged conservatively as `secret:unserializable` (fail closed).
 - **Inbound results:** injection pattern bank (imperative override phrases such as "ignore previous instructions", system-prompt-shaped text, hidden-instruction markers, zero-width Unicode, large base64 blobs, ANSI escape sequences).
 - Verdict is a list of flags, not a binary. Policy decides consequences. Defaults shipped: secret flags → deny; injection flags → escalate to approve.
 - Documentation states plainly: these are heuristics — defense in depth, not a guarantee. LLM-based scanning is v2.
@@ -118,7 +119,8 @@ Semantics:
 
 Fail closed, always:
 - Downstream crash → auto-restart with backoff (max 3 attempts), then mark degraded (red in dashboard). That server's tools return a clear error to the agent; other servers are unaffected.
-- Gateway internal error mid-call → deny by default, audit the failure.
+- Gateway internal error mid-call (warden's own fault) → deny by default with `Blocked by warden: internal error (...)`, audited `forwarded` reflecting whether the downstream call had already been reached.
+- A downstream tool *itself* failing (throwing after warden allowed and forwarded the call) is not a warden internal error: it is audited `decision: allow`, `forwarded: true`, with the tool's error captured, and relayed to the agent as `Tool call failed: <message>`. This keeps the audit trail and rate-limit counting truthful about what warden decided versus what the tool did.
 - Dashboard port conflict → auto-increment port, print the actual URL.
 
 ## 8. Testing Strategy

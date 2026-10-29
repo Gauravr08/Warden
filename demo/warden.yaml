@@ -1,0 +1,18 @@
+# Demo policy for warden. Uses the built-in echo test server as a fake
+# "third-party MCP server" exposing tools: echo, danger, crash.
+servers:
+  demo:
+    command: node
+    args: ["tests/fixtures/echo-server.mjs"]
+
+defaults:
+  action: approve            # anything not matched below -> ask the human in the dashboard
+
+policies:
+  - match: { server: demo, tool: danger }
+    action: deny             # 'danger' is hard-blocked, no matter what
+  - match: { tool: "*", args_contain_secret: true }
+    action: deny             # anything that looks like a secret is blocked, even if allowed above
+
+dashboard:
+  port: 9977

@@ -1,0 +1,38 @@
+{
+  "name": "warden",
+  "version": "0.1.0",
+  "description": "Security gateway for MCP: policy, human approval, scanning, and audit for agent tool calls",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "warden": "dist/cli/index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "test:e2e": "cross-env E2E=1 vitest run tests/e2e",
+    "dev": "tsx src/cli/index.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "better-sqlite3": "^12.11.1",
+    "commander": "^13.1.0",
+    "node-notifier": "^10.0.1",
+    "picomatch": "^4.0.5",
+    "yaml": "^2.9.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^26.1.0",
+    "@types/node-notifier": "^8.0.5",
+    "@types/picomatch": "^4.0.3",
+    "cross-env": "^10.1.0",
+    "tsx": "^4.23.0",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.9"
+  }
+}
